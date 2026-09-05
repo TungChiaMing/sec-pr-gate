@@ -1,0 +1,35 @@
+services:
+  # 掃描本機某個 repo：SCAN_TARGET=/path/to/repo docker compose run --rm scan
+  scan:
+    build:
+      context: .
+    image: sec-pr-gate:latest
+    volumes:
+      - ${SCAN_TARGET:-./app}:/src:ro
+      - ./reports:/out
+      - sec-cache:/cache
+    environment:
+      SEMGREP_RULES: ${SEMGREP_RULES:-p/default p/secrets p/owasp-top-ten}
+      TRIVY_SCANNERS: ${TRIVY_SCANNERS:-vuln,secret,misconfig}
+      FAIL_ON_SEMGREP: ${FAIL_ON_SEMGREP:-ERROR}
+      FAIL_ON_TRIVY: ${FAIL_ON_TRIVY:-HIGH,CRITICAL}
+    command: ["scan"]
+
+  # 對 PR 做 gate：docker compose run --rm pr-gate 123
+  pr-gate:
+    image: sec-pr-gate:latest
+    depends_on: [scan]
+    volumes:
+      - ${SCAN_TARGET:-./app}:/src:ro
+      - ./reports:/out
+      - sec-cache:/cache
+    environment:
+      GH_TOKEN: ${GH_TOKEN:?需要在 .env 設定 GH_TOKEN}
+      GH_REPO: ${GH_REPO:-}
+      POST_COMMENT: ${POST_COMMENT:-1}
+      FAIL_ON_SEMGREP: ${FAIL_ON_SEMGREP:-ERROR}
+      FAIL_ON_TRIVY: ${FAIL_ON_TRIVY:-HIGH,CRITICAL}
+    entrypoint: ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh", "pr-gate"]
+
+volumes:
+  sec-cache:

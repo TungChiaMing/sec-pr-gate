@@ -1,0 +1,6 @@
+Flask==2.2.2
+Werkzeug==2.2.2
+Jinja2==3.1.2
+requests==2.31.0
+urllib3==1.26.18
+PyYAML==6.0.1

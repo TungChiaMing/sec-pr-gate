@@ -1,0 +1,6 @@
+.venv/
+out/
+users.db
+__pycache__/
+reports/
+.env

@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>:root{color-scheme:light dark}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>sec-pr-gate 掃描門檻</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap');
+
+:root{
+  --paper:#EEF0F4;
+  --surface:#FFFFFF;
+  --surface-2:#F7F8FA;
+  --ink:#141821;
+  --ink-2:#39414E;
+  --muted:#6B7484;
+  --line:#D5DAE3;
+  --line-soft:#E5E8EE;
+  --accent:#2A3D8F;
+  --accent-soft:#E3E7F6;
+  --crit:#A32218;
+  --high:#B0551B;
+  --med:#7A6215;
+  --low:#3C6382;
+  --pass:#256B4A;
+  --shadow:0 1px 2px rgba(20,24,33,.06), 0 8px 24px -12px rgba(20,24,33,.18);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0D1016;
+    --surface:#161B24;
+    --surface-2:#1B212C;
+    --ink:#E9ECF2;
+    --ink-2:#BFC6D2;
+    --muted:#8B94A3;
+    --line:#2A3140;
+    --line-soft:#222836;
+    --accent:#93A6EA;
+    --accent-soft:#1D2440;
+    --crit:#E9796C;
+    --high:#E0975E;
+    --med:#CDB25C;
+    --low:#82B0D1;
+    --pass:#6FC096;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0D1016;
+  --surface:#161B24;
+  --surface-2:#1B212C;
+  --ink:#E9ECF2;
+  --ink-2:#BFC6D2;
+  --muted:#8B94A3;
+  --line:#2A3140;
+  --line-soft:#222836;
+  --accent:#93A6EA;
+  --accent-soft:#1D2440;
+  --crit:#E9796C;
+  --high:#E0975E;
+  --med:#CDB25C;
+  --low:#82B0D1;
+  --pass:#6FC096;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:"Source Serif 4","Noto Serif TC",Georgia,"Songti TC",serif;
+  font-size:17px;
+  line-height:1.75;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px 96px}
+
+/* ---------- masthead ---------- */
+.masthead{
+  padding:56px 0 32px;
+  border-bottom:2px solid var(--ink);
+}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--accent);margin:0 0 14px;font-weight:600;
+}
+h1{
+  font-family:Archivo,"Helvetica Neue",Arial,"PingFang TC",sans-serif;
+  font-weight:700;font-size:clamp(38px,6vw,60px);line-height:1.04;
+  letter-spacing:-.025em;margin:0;text-wrap:balance;
+}
+.standfirst{
+  font-size:19px;color:var(--ink-2);max-width:60ch;margin:18px 0 0;
+}
+.meta{
+  display:flex;flex-wrap:wrap;gap:0 34px;margin-top:28px;
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:12.5px;
+}
+.meta div{display:flex;flex-direction:column;gap:2px}
+.meta dt{color:var(--muted);letter-spacing:.08em;text-transform:uppercase;font-size:11px}
+.meta dd{margin:0;color:var(--ink);font-weight:500}
+
+/* ---------- sections ---------- */
+section{
+  display:grid;grid-template-columns:1fr;gap:0;
+  padding:52px 0;border-bottom:1px solid var(--line-soft);
+}
+@media (min-width:940px){
+  section{grid-template-columns:132px minmax(0,1fr);gap:32px}
+}
+.rail{
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);padding-top:12px;
+}
+.rail b{display:block;color:var(--accent);font-size:22px;letter-spacing:0;font-weight:600;line-height:1}
+.body{min-width:0;display:flex;flex-direction:column;gap:22px}
+
+h2{
+  font-family:Archivo,"Helvetica Neue",Arial,"PingFang TC",sans-serif;
+  font-weight:600;font-size:clamp(25px,3.4vw,33px);line-height:1.2;
+  letter-spacing:-.015em;margin:0;text-wrap:balance;
+}
+h3{
+  font-family:Archivo,"Helvetica Neue",Arial,"PingFang TC",sans-serif;
+  font-weight:600;font-size:18px;margin:0;letter-spacing:-.005em;
+}
+p{margin:0;max-width:66ch}
+.body > p, .body > ul{color:var(--ink-2)}
+ul{margin:0;padding-left:1.2em;max-width:66ch;display:flex;flex-direction:column;gap:8px}
+li::marker{color:var(--muted)}
+strong{font-weight:600;color:var(--ink)}
+code{
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  font-size:.86em;background:var(--surface-2);border:1px solid var(--line-soft);
+  border-radius:3px;padding:1px 5px;color:var(--ink);
+}
+a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1px}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+
+/* ---------- pipeline ---------- */
+.pipe{
+  display:flex;flex-wrap:wrap;align-items:stretch;gap:10px;
+  background:var(--surface);border:1px solid var(--line);
+  padding:20px;border-radius:6px;overflow-x:auto;box-shadow:var(--shadow);
+}
+.stage{
+  flex:1 1 128px;min-width:128px;display:flex;flex-direction:column;gap:6px;
+  padding:12px 13px;background:var(--surface-2);border:1px solid var(--line-soft);
+  border-radius:4px;
+}
+.stage.split{background:var(--accent-soft);border-color:var(--accent)}
+.stage.gate{border-color:var(--crit)}
+.stage .k{
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+}
+.stage .v{
+  font-family:Archivo,Arial,"PingFang TC",sans-serif;font-weight:600;font-size:14.5px;
+  line-height:1.3;color:var(--ink);
+}
+.stage .n{font-size:12.5px;color:var(--muted);line-height:1.45;font-family:"Source Serif 4",Georgia,serif}
+.arrow{
+  align-self:center;color:var(--muted);font-family:"IBM Plex Mono",monospace;
+  font-size:15px;flex:0 0 auto;
+}
+
+/* ---------- tables ---------- */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{padding:10px 14px;text-align:left;border-bottom:1px solid var(--line-soft);white-space:nowrap}
+th{
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
+  font-weight:600;background:var(--surface-2);
+}
+tbody tr:last-child td{border-bottom:0}
+td.num{font-variant-numeric:tabular-nums;font-family:"IBM Plex Mono",Menlo,monospace}
+td.rule{font-family:"IBM Plex Mono",Menlo,monospace;font-size:12.5px;white-space:normal;min-width:20ch}
+
+.sev{
+  display:inline-flex;align-items:center;gap:6px;
+  font-family:"IBM Plex Mono",Menlo,monospace;font-size:11px;font-weight:600;
+  letter-spacing:.07em;
+}
+.sev::before{content:"";width:8px;height:8px;border-radius:2px;background:currentColor}
+.sev.c{color:var(--crit)} .sev.h{color:var(--high)} .sev.m{color:var(--med)}
+.sev.l{color:var(--low)} .sev.p{color:var(--pass)}
+
+/* ---------- answer block ---------- */
+.short{
+  background:var(--surface);border:1px solid var(--line);
+  border-left:3px solid var(--accent);
+  border-radius:0 5px 5px 0;padding:16px 20px;
+  display:flex;flex-direction:column;gap:6px;box-shadow:var(--shadow);
+}
+.short .k{
+  font-family:"IBM Plex Mono",Menlo,monospace;font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--accent);font-weight:600;
+}
+.short p{font-size:17px;color:var(--ink);max-width:62ch}
+
+.split2{display:grid;grid-template-columns:1fr;gap:14px}
+@media (min-width:700px){.split2{grid-template-columns:1fr 1fr}}
+.col{
+  background:var(--surface);border:1px solid var(--line);border-radius:5px;
+  padding:16px 18px;display:flex;flex-direction:column;gap:9px;
+}
+.col h3{font-size:16px}
+.col .tag{
+  font-family:"IBM Plex Mono",Menlo,monospace;font-size:11px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted);
+}
+.col p{font-size:15px;color:var(--ink-2);max-width:none}
+.col ul{font-size:15px;color:var(--ink-2);max-width:none;gap:6px}
+
+pre{
+  margin:0;background:var(--surface);border:1px solid var(--line);border-radius:5px;
+  padding:15px 17px;overflow-x:auto;
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:13px;line-height:1.65;
+  color:var(--ink);
+}
+pre .c{color:var(--muted)}
+pre .bad{color:var(--crit)}
+pre .good{color:var(--pass)}
+
+.caution{
+  background:var(--surface-2);border:1px dashed var(--line);border-radius:5px;
+  padding:14px 17px;font-size:15px;color:var(--ink-2);
+}
+.caution b{color:var(--ink)}
+
+footer{padding:44px 0 0;color:var(--muted);font-size:14px;display:flex;flex-direction:column;gap:12px}
+footer ul{max-width:none;gap:5px;font-size:13.5px}
+footer a{color:var(--accent)}
+
+@media (prefers-reduced-motion:no-preference){
+  .stage,.col,.short{transition:border-color .15s ease}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">Day 1 · Security PR Gate</p>
+    <h1>sec-pr-gate</h1>
+    <p class="standfirst">把 Semgrep（SAST）與 Trivy（SCA + Secrets）包進一個容器，對 PR 產生統一報告與阻擋門檻。這頁記錄它在做什麼、目前掃出什麼，以及三個決定這套工具設計方式的問題。</p>
+    <dl class="meta">
+      <div><dt>掃描標的</dt><dd>app/ · Flask</dd></div>
+      <div><dt>掃描日期</dt><dd>2026-09-05</dd></div>
+      <div><dt>Semgrep</dt><dd>13 findings</dd></div>
+      <div><dt>Trivy</dt><dd>26 findings</dd></div>
+      <div><dt>Gate</dt><dd><span class="sev c">FAIL · exit 1</span></dd></div>
+    </dl>
+  </header>
+
+  <section>
+    <div class="rail"><b>01</b>專案是什麼</div>
+    <div class="body">
+      <h2>一個可攜的 PR 安全掃描閘門</h2>
+      <p>目標不是「多找幾個漏洞」，而是<strong>讓安全掃描變成 PR 流程裡一個穩定、可重現、會擋人的步驟</strong>。三件事：把工具鏈釘進 image，讓本機與 CI 跑出同一份結果；把兩個工具的輸出合成一份人看得懂的 <code>summary.md</code>；用可調的 severity 門檻決定這個 PR 過不過。</p>
+
+      <div class="pipe">
+        <div class="stage"><span class="k">input</span><span class="v">PR / repo</span><span class="n">唯讀掛載到 /src</span></div>
+        <span class="arrow">→</span>
+        <div class="stage split"><span class="k">sast</span><span class="v">Semgrep</span><span class="n">p/default · p/secrets · p/owasp-top-ten</span></div>
+        <div class="stage split"><span class="k">sca + secrets</span><span class="v">Trivy</span><span class="n">vuln · secret · misconfig</span></div>
+        <span class="arrow">→</span>
+        <div class="stage"><span class="k">output</span><span class="v">/out</span><span class="n">JSON · SARIF · summary.md</span></div>
+        <span class="arrow">→</span>
+        <div class="stage gate"><span class="k">gate</span><span class="v">門檻判定</span><span class="n">exit 1 → 擋 PR，gh 回貼留言</span></div>
+      </div>
+
+      <p>刻意設計的地方：<strong>掃描標的與工具是分離的</strong>。<code>/src</code> 是唯讀掛載，換一個 repo 只要換 <code>TARGET</code>；<code>/cache</code> 讓 Trivy 的漏洞 DB 不用每次重抓；門檻用環境變數控制，所以同一個 image 在本機可以只產報告、在 CI 可以擋 PR。SARIF 是為了之後餵給 GitHub Code Scanning。</p>
+
+      <div class="caution"><b>為什麼標的是一個刻意寫爛的 Flask app：</b>要驗證「掃描器有沒有在做事」，需要一份已知答案的樣本。<code>app/app.py</code> 裡有 4 個真漏洞（hardcoded secret、SQLi、command injection、SSRF），另外埋了情境型誤報——<code>yaml.load</code> 已經用 SafeLoader、<code>md5</code> 只是拿來做 cache key。這份 ground truth 是後面用 LLM 做 triage 時量 precision / recall 的基準。</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>02</b>目前結果</div>
+    <div class="body">
+      <h2>39 筆 findings，4 個真漏洞</h2>
+      <p>兩個工具跑出來的數字，說明了為什麼「掃完就結束」不夠用。</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>工具</th><th>Critical / Error</th><th>High / Warning</th><th>Medium / Info</th><th>Low</th><th>合計</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Semgrep</td><td class="num">10</td><td class="num">3</td><td class="num">0</td><td class="num">–</td><td class="num">13</td></tr>
+            <tr><td>Trivy</td><td class="num">1</td><td class="num">7</td><td class="num">16</td><td class="num">2</td><td class="num">26</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Semgrep 的 13 筆，實際只對應 <strong>4 個真漏洞 + 2 個誤報</strong>：<code>app.py:31</code> 一段 SQL 字串拼接被 4 條規則同時打中，<code>app.py:40</code> 的 <code>shell=True</code> 被 3 條。更麻煩的是規則歸因——一個純 Flask + sqlite3 的檔案，被 <code>python.django.*</code> 與 <code>python.sqlalchemy.*</code> 的規則命中。結論對，框架前綴錯。</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>位置</th><th>判定</th><th>規則 / 說明</th></tr></thead>
+          <tbody>
+            <tr><td class="num">app.py:15</td><td><span class="sev c">TP</span></td><td class="rule">detected-stripe-api-key<br><span style="color:var(--muted)">Trivy 也獨立命中 stripe-secret-token（跨工具重複）</span></td></tr>
+            <tr><td class="num">app.py:31</td><td><span class="sev c">TP</span></td><td class="rule">tainted-sql-string ×2 · formatted-sql-query · sqlalchemy-execute-raw-query</td></tr>
+            <tr><td class="num">app.py:40</td><td><span class="sev c">TP</span></td><td class="rule">subprocess-injection · dangerous-subprocess-use · subprocess-shell-true</td></tr>
+            <tr><td class="num">app.py:46,48</td><td><span class="sev c">TP</span></td><td class="rule">ssrf-injection-requests · ssrf-requests</td></tr>
+            <tr><td class="num">app.py:55</td><td><span class="sev p">FP</span></td><td class="rule">insecure-deserialization<br><span style="color:var(--muted)">已用 <code>yaml.SafeLoader</code>，規則只比對函式名</span></td></tr>
+            <tr><td class="num">app.py:61</td><td><span class="sev p">FP</span></td><td class="rule">insecure-hash-algorithm-md5<br><span style="color:var(--muted)">md5 用於 cache key，無安全語意</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Trivy 那 26 筆裡，25 筆是 <code>requirements.txt</code> 的 CVE（urllib3 4 個 HIGH、Werkzeug 3 個、Flask 1 個），1 筆是 secret。這批 CVE 正好示範了下一節第一題要講的事：<strong>有 CVE 不等於你的用法打得到</strong>。Werkzeug 的 multipart DoS（CVE-2023-25577）在這個沒有任何 upload endpoint 的 app 上打不到；但 urllib3 的 redirect 類 CVE，在 <code>/fetch</code> 這個 URL 由使用者控制的 endpoint 上，反而跟 SSRF 疊加成真的可利用路徑。</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>Q1</b>觀念</div>
+    <div class="body">
+      <h2>SAST 與 SCA 差在哪？為什麼兩個都要跑</h2>
+
+      <div class="short">
+        <span class="k">短答</span>
+        <p>SAST 找<strong>你自己寫出來的</strong>漏洞，SCA 找<strong>別人寫的</strong>。兩者的輸入、方法、誤報結構都不同，互相補不了。</p>
+      </div>
+
+      <div class="split2">
+        <div class="col">
+          <span class="tag">SAST · Semgrep</span>
+          <h3>分析原始碼的模式與資料流</h3>
+          <p>把程式碼 parse 成 AST，比對「使用者輸入是否流進危險 sink」——例如 <code>request.args</code> 流進 SQL 字串。找的是你這次 PR 寫進去的邏輯缺陷。</p>
+          <ul>
+            <li><strong>誤報高</strong>：規則看的是模式，不是語意</li>
+            <li>需要 triage，這是 agent 的施力點</li>
+            <li>新程式碼一寫出來就能掃，不必等有人公布漏洞</li>
+          </ul>
+        </div>
+        <div class="col">
+          <span class="tag">SCA · Trivy</span>
+          <h3>比對套件名稱 + 版本與漏洞資料庫</h3>
+          <p>讀 <code>requirements.txt</code> 這類 lock/manifest，拿 <code>urllib3@1.26.18</code> 去 OSV / NVD / GHSA 查有沒有登記的漏洞。找的是你相依的別人的程式碼。</p>
+          <ul>
+            <li><strong>誤報低</strong>：版本比對幾乎是機械式的</li>
+            <li>但「有 CVE ≠ 可被利用」——這叫 <strong>reachability</strong></li>
+            <li>版本必須 pin（<code>==</code>）才比得到</li>
+          </ul>
+        </div>
+      </div>
+
+      <p>實務上絕大多數專案的程式碼有 90% 以上是相依套件，只跑 SAST 等於放掉大部分攻擊面；反過來只跑 SCA，你自己寫的那行 <code>"... WHERE name = '%s'" % name</code> 永遠不會被發現，因為它不在任何漏洞資料庫裡。</p>
+
+      <div class="caution"><b>兩邊的誤報是不同性質的，處理方式也不同。</b>SAST 的誤報是「這個模式在這個上下文其實安全」——要看周圍程式碼才能判斷。SCA 的誤報是「這個 CVE 存在，但我的呼叫路徑碰不到它」——要看有沒有實際呼叫到脆弱的函式。兩者都是 LLM agent 可以介入的地方，但問的問題不一樣。</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>Q2</b>供應鏈</div>
+    <div class="body">
+      <h2>GitHub Actions 為什麼要 pin commit SHA，不能用 tag</h2>
+
+      <div class="short">
+        <span class="k">短答</span>
+        <p><strong>tag 是可變的指標，commit SHA 是內容雜湊。</strong>維護者——或偷到 token 的攻擊者——可以把 <code>v1</code> 指到任何一個 commit，而你的 workflow 不會有任何感覺。</p>
+      </div>
+
+      <p><code>uses: aquasecurity/trivy-action@v0.36.0</code> 這行的意思不是「用 v0.36.0 這份程式碼」，而是「用 <em>現在</em> v0.36.0 這個標籤指到的東西」。Git tag 可以被 force-push 覆寫，GitHub Actions 每次 run 都重新解析一次，所以同一行 YAML 昨天跑的跟今天跑的可以是完全不同的程式碼。</p>
+
+      <div class="caution"><b>這不是假設。</b>2026 年 3 月 19 日，攻擊者用竊得的憑證把 <code>trivy-action</code> 的 <strong>77 個 tag 中的 76 個</strong>、以及 <code>setup-trivy</code> 的<strong>全部 7 個 tag</strong> 一次覆寫到含惡意程式的 commit，用來竊取 CI/CD secrets；同時發佈了植入惡意程式的 Trivy CLI v0.69.4（以及 3/22 的 Docker 映像 v0.69.5、v0.69.6）。諷刺的是被拿來當跳板的正是一個安全掃描器——CI 裡本來就有高權限 token 的那種工具。</div>
+
+      <p>SHA 是那個 commit 內容的雜湊，改內容就換 SHA，沒有辦法「把 SHA 指到別的地方」。所以寫法是把版本號降級成註解：</p>
+
+<pre><span class="bad">- uses: aquasecurity/trivy-action@v0.36.0            # tag：可被覆寫</span>
+<span class="good">+ uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4  # v0.36.0</span></pre>
+
+      <p>代價是不會自動拿到更新，所以要配 <strong>Dependabot 或 Renovate</strong>——它們認得後面那個註解，會連 SHA 帶註解一起發 PR 升版。組織層級還可以用 GitHub Actions policy 直接強制 SHA pinning，讓沒 pin 的 workflow 根本跑不起來。</p>
+
+      <p>同一個道理往外推：Docker image 也要用 digest（<code>image@sha256:…</code>）而不是 <code>:latest</code>。這個 repo 的 <code>Dockerfile</code> 目前用 <code>FROM aquasec/trivy:latest</code>，是還沒補上的一刀。</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>Q3</b>LLM triage</div>
+    <div class="body">
+      <h2>LLM 為什麼能降低 SAST 誤報？限制在哪</h2>
+
+      <div class="short">
+        <span class="k">短答</span>
+        <p>因為<strong>靜態規則只看模式，看不到語意</strong>。md5 用在 cache key 和用在密碼雜湊，在 AST 上長得一模一樣；差別在意圖與上下文，而那正是 LLM 讀得懂的東西。</p>
+      </div>
+
+      <p>把這頁第 02 節那兩個 FP 攤開看就很清楚。規則能判斷的是「這裡呼叫了 <code>yaml.load</code>」「這裡呼叫了 <code>hashlib.md5</code>」；要判斷安不安全，需要的是「<code>Loader</code> 參數是什麼」「這個 hash 的輸出流去哪裡、有沒有被當成信任憑據」。後者是關於<strong>資料來源、呼叫關係與可利用條件</strong>的推理，不是模式比對。</p>
+
+      <div class="split2">
+        <div class="col">
+          <span class="tag">做法一 · prompting</span>
+          <h3>把上下文塞進 prompt</h3>
+          <p>Datadog 的做法：拿 OWASP Benchmark 當標準答案，把 finding 加上周圍程式碼做成二元分類任務，反覆調 prompt。便宜、可批次，但 LLM 只看得到你餵的那幾行。</p>
+        </div>
+        <div class="col">
+          <span class="tag">做法二 · agent</span>
+          <h3>讓它自己去讀更多檔案</h3>
+          <p>agent 可以追呼叫鏈、開別的檔案、查參數定義。<em>Sifting the Noise</em>（arXiv 2601.22952）在 OSS-Fuzz 資料集上，FP 辨識率從單純 prompting 的 <strong>36.4%</strong> 提升到 SWE-agent + Claude Sonnet 4 的 <strong>95.5%</strong>。</p>
+        </div>
+      </div>
+
+      <p>差距這麼大的原因不神秘：判斷 <code>app.py:61</code> 的 md5 是不是 FP，需要知道 <code>cache_key()</code> 被誰呼叫、回傳值流到哪裡——那些資訊不在 finding 附近的那 5 行裡，agent 會自己去找，單純 prompting 不會。</p>
+
+      <div class="caution"><b>限制：過度過濾會壓掉真漏洞。</b>同一篇論文明確警告 aggressive FP reduction 會連真的漏洞一起濾掉——而漏掉一個真漏洞的代價，遠高於讓人多看一則誤報。所以這套東西<strong>必須同時量 precision 和 recall</strong>，不能只看「噪音少了多少」。另外兩個現實限制：agent 要多讀檔案，token 成本與延遲都比 prompting 高；效果對模型、漏洞類型高度敏感，換一類漏洞就要重新驗證。<br><br>務實的落地方式是<strong>不要讓 LLM 有刪除權</strong>：它只做降級與標註（把 finding 分成「需人看」與「可能 FP，附理由」），門檻判定仍然照原本的 severity 走。這樣最壞情況是多看幾則，而不是漏掉一則。</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>04</b>指令</div>
+    <div class="body">
+      <h2>怎麼跑</h2>
+<pre>make build      <span class="c"># 建 image（semgrep + trivy + gh）</span>
+make version    <span class="c"># 確認 trivy ≥ 0.70.0（不能是被投毒的 0.69.4）</span>
+
+make scan       <span class="c"># 全掃 + 門檻判定，命中即 exit 1（CI 用）</span>
+make sast       <span class="c"># 只跑 semgrep，不做門檻判定</span>
+make sca        <span class="c"># 只跑 trivy，不做門檻判定</span>
+make count      <span class="c"># 不重掃，彙整 reports/ 現有 JSON</span>
+
+TARGET=$(pwd) make scan   <span class="c"># 連 repo 自己的 Dockerfile / workflow 一起掃</span></pre>
+      <p><code>make scan</code> 回傳 <code>exit 1</code> 是設計行為，不是執行失敗——<code>FAIL_ON_SEMGREP=ERROR</code> 命中 10 筆、<code>FAIL_ON_TRIVY=HIGH,CRITICAL</code> 命中 8 筆，門檻觸發。要只產報告不擋，把兩個變數設成 <code>none</code>，或用 <code>make sast</code> / <code>make sca</code>。報告輸出在 <code>reports/</code>：<code>semgrep.json</code>、<code>semgrep.sarif</code>、<code>trivy.json</code>、<code>trivy.sarif</code>、<code>summary.md</code>。詳細的 rule id 與 TP／FP 標註在 repo 的 <code>notes.md</code>。</p>
+    </div>
+  </section>
+
+  <footer>
+    <p>參考來源</p>
+    <ul>
+      <li><a href="https://github.com/aquasecurity/trivy/security/advisories/GHSA-69fq-xp46-6x23">Trivy ecosystem supply chain temporarily compromised — GHSA-69fq-xp46-6x23</a></li>
+      <li><a href="https://arxiv.org/abs/2601.22952">Sifting the Noise: A Comparative Study of LLM Agents in Vulnerability False Positive Filtering — arXiv 2601.22952</a></li>
+      <li><a href="https://www.datadoghq.com/blog/using-llms-to-filter-out-false-positives/">Using LLMs to filter out false positives from static code analysis — Datadog</a></li>
+    </ul>
+  </footer>
+
+</div>
+
+</body>
+</html>
