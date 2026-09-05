@@ -8,17 +8,20 @@ DOCKER_RUN = docker run --rm \
 	  -v "$(REPORTS):/out" \
 	  -v sec-cache:/cache
 
-.PHONY: build version scan sast sca count shell clean help
+# lint 掃的是 repo 自己的 .github/workflows，所以掛根目錄而不是 $(TARGET)
+DOCKER_LINT = docker run --rm -v "$(CURDIR):/src:ro"
+
+.PHONY: build version scan sast sca count lint-ci lint-ci-pedantic shell clean help
 
 ## help    : 列出可用 target
 help:
 	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## //'
 
-## build   : 建 image（semgrep + trivy + gh）
+## build   : 建 image（semgrep + trivy + gh + actionlint + zizmor）
 build:
 	docker build -t $(IMAGE) .
 
-## version : 印出三個工具版本（確認 trivy >= 0.70.0）
+## version : 印出所有工具版本（確認 trivy >= 0.70.0）
 version: build
 	docker run --rm $(IMAGE) version
 
@@ -44,6 +47,14 @@ count: build
 ## shell   : 進 container 手動玩
 shell: build
 	docker run --rm -it -v "$(TARGET):/src:ro" $(IMAGE) bash
+
+## lint-ci : 掃 pipeline 本身（actionlint + zizmor，跑在 image 裡，本機不用裝）
+lint-ci: build
+	$(DOCKER_LINT) $(IMAGE) lint
+
+## lint-ci-pedantic : 同上，但開 zizmor pedantic（連 permissions 沒註解都報）
+lint-ci-pedantic: build
+	$(DOCKER_LINT) -e ZIZMOR_ARGS=--persona=pedantic $(IMAGE) lint
 
 ## clean   : 刪掉 reports/
 clean:

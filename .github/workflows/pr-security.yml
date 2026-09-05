@@ -1,0 +1,133 @@
+name: pr-security
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]      # baseline scan of main (used by Day 3 diff)
+  workflow_dispatch:
+
+# Deny-by-default: the workflow itself gets nothing; each job asks for what it needs.
+permissions: {}
+
+concurrency:
+  group: pr-security-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  TRIVY_VERSION: "0.74.0"
+  # sha256 of trivy_0.74.0_Linux-64bit.tar.gz, taken from trivy_0.74.0_checksums.txt (2026-09-05)
+  TRIVY_SHA256: "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
+  SEMGREP_VERSION: "1.176.1"
+
+jobs:
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read           # checkout the PR head
+      security-events: write   # upload SARIF to Code Scanning
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Semgrep (pinned)
+        run: pip install --disable-pip-version-check "semgrep==${SEMGREP_VERSION}"
+
+      - name: Semgrep scan (JSON + SARIF)
+        run: |
+          mkdir -p out
+          semgrep scan \
+            --config p/python --config p/flask --config p/secrets \
+            --metrics=off \
+            --json-output out/semgrep.json \
+            --sarif-output out/semgrep.sarif \
+            app/
+          echo "semgrep findings: $(jq '.results | length' out/semgrep.json)"
+
+      - name: Upload SARIF to Code Scanning
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          sarif_file: out/semgrep.sarif
+          category: semgrep
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: semgrep-results
+          path: out/semgrep.*
+          if-no-files-found: error
+          retention-days: 14
+
+  sca:
+    name: SCA + Secrets (Trivy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read           # checkout the PR head
+      security-events: write   # upload SARIF to Code Scanning
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Trivy from release binary + verify sha256
+        run: |
+          set -euo pipefail
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          curl -fsSL -o trivy.tgz "${base}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  trivy.tgz" | sha256sum -c -
+          tar -xzf trivy.tgz trivy
+          sudo install -m 0755 trivy /usr/local/bin/trivy
+          trivy --version
+
+      - name: Cache Trivy DB
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: trivy-db-${{ runner.os }}-
+
+      - name: Trivy fs scan (JSON + SARIF)
+        run: |
+          mkdir -p out
+          trivy fs --scanners vuln,secret --format json  -o out/trivy.json  --no-progress .
+          trivy fs --scanners vuln,secret --format sarif -o out/trivy.sarif --no-progress --skip-db-update .
+          echo "trivy findings: $(jq '[.Results[]? | (.Vulnerabilities // [] | length) + (.Secrets // [] | length)] | add // 0' out/trivy.json)"
+
+      - name: Upload SARIF to Code Scanning
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          sarif_file: out/trivy.sarif
+          category: trivy
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: trivy-results
+          path: out/trivy.*
+          if-no-files-found: error
+          retention-days: 14
+
+  summary:
+    name: Job Summary
+    needs: [sast, sca]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read           # sparse-checkout scripts/ only
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: out
+          merge-multiple: true
+      - name: Write summary
+        run: python3 scripts/summary.py out/semgrep.json out/trivy.json >> "$GITHUB_STEP_SUMMARY"

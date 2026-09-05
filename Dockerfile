@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# sec-pr-gate — semgrep + trivy + gh 打包成單一掃描 image
+# sec-pr-gate — semgrep + trivy + gh + actionlint + zizmor 打包成單一掃描 image
 # 支援 linux/amd64 與 linux/arm64（Apple Silicon 原生）
 #
 # build:  docker build -t sec-pr-gate:latest .
@@ -19,6 +19,12 @@ FROM python:3.12-slim-bookworm
 # semgrep 版本；要釘死可改成 "==1.175.0"
 ARG SEMGREP_SPEC=">=1.175.0"
 
+# pipeline 自我檢查工具（版本釘死，binary 驗 sha256）
+ARG ZIZMOR_SPEC="==1.30.0"
+ARG ACTIONLINT_VERSION="1.7.10"
+ARG ACTIONLINT_SHA256_AMD64="f4c76b71db5755a713e6055cbb0857ed07e103e028bda117817660ebadb4386f"
+ARG ACTIONLINT_SHA256_ARM64="cd3dfe5f66887ec6b987752d8d9614e59fd22f39415c5ad9f28374623f41773a"
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -30,7 +36,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        ca-certificates curl git jq bash tini gnupg; \
+        ca-certificates curl git jq bash tini gnupg shellcheck; \
     install -m 0755 -d /etc/apt/keyrings; \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
@@ -46,8 +52,24 @@ RUN set -eux; \
 # ---------- trivy ----------
 COPY --from=trivy /usr/local/bin/trivy /usr/local/bin/trivy
 
-# ---------- semgrep ----------
-RUN pip install --upgrade pip && pip install "semgrep${SEMGREP_SPEC}"
+# ---------- actionlint（自行下載 + 驗 sha256，跟 CI 裡裝 trivy 同一套做法） ----------
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) al_sha="$ACTIONLINT_SHA256_AMD64" ;; \
+      arm64) al_sha="$ACTIONLINT_SHA256_ARM64" ;; \
+      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/actionlint.tgz \
+      "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${arch}.tar.gz"; \
+    echo "${al_sha}  /tmp/actionlint.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/actionlint.tgz -C /tmp actionlint; \
+    install -m 0755 /tmp/actionlint /usr/local/bin/actionlint; \
+    rm -f /tmp/actionlint.tgz /tmp/actionlint
+
+# ---------- semgrep + zizmor ----------
+RUN pip install --upgrade pip \
+ && pip install "semgrep${SEMGREP_SPEC}" "zizmor${ZIZMOR_SPEC}"
 
 # ---------- 非 root 使用者 ----------
 RUN useradd -m -u 1000 -s /bin/bash scanner \
@@ -67,8 +89,9 @@ ENV XDG_CACHE_HOME=/cache \
 USER scanner
 WORKDIR /src
 
-# 冒煙測試：三個工具都叫得動才算 build 成功
-RUN semgrep --version && trivy --version && gh --version
+# 冒煙測試：六個工具都叫得動才算 build 成功
+RUN semgrep --version && trivy --version && gh --version \
+ && actionlint --version && zizmor --version && shellcheck --version
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 CMD ["scan"]
