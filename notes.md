@@ -316,9 +316,13 @@ new 仍為 3、unchanged 仍為 94
 | 用途 | 結果 | URL |
 |---|---|---|
 | main baseline（無 base，全部視為 new） | success · head total **94** | https://github.com/TungChiaMing/sec-pr-gate/actions/runs/34042942425 |
-| PR #1（vs base） | | `<待填>` |
+| PR #1（vs base） | success · new **3** / unchanged **94** | https://github.com/TungChiaMing/sec-pr-gate/actions/runs/34044353349 |
 
-CI `counts.new` = `<待填>`
+CI `counts` = `{"head_total": 97, "new": 3, "fixed": 0, "unchanged": 94}` —— **與本機 `make diff` 逐字相同**，
+三筆 new 連行號（71 / 73 / 73）都一致。
+
+PR 上一樣出現 GitHub Code Scanning 自己的 `Semgrep OSS` check 是紅的（新增 error-severity alert），
+`pr-security` 的三個 job 全綠。跟 D2 同一個現象，D5 要決定誰說了算。
 
 ## fingerprint 跨環境穩定（CI ↔ 本機交叉驗證）
 
