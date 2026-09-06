@@ -315,10 +315,32 @@ new 仍為 3、unchanged 仍為 94
 
 | 用途 | 結果 | URL |
 |---|---|---|
-| main baseline（無 base，全部視為 new） | | `<待填>` |
+| main baseline（無 base，全部視為 new） | success · head total **94** | https://github.com/TungChiaMing/sec-pr-gate/actions/runs/34042942425 |
 | PR #1（vs base） | | `<待填>` |
 
 CI `counts.new` = `<待填>`
+
+## fingerprint 跨環境穩定（CI ↔ 本機交叉驗證）
+
+從 main 的 CI Job Summary 抽 8 個 fingerprint 回本機的 `base` run 查詢：**8/8 完全吻合**。
+
+| fingerprint | finding |
+|---|---|
+| `cf14c260dee3b4c2` | `app/app.py:61` md5 |
+| `8661e11ab6441821` | `app/app.py:15` trivy stripe |
+| `b8dd72a3be4815ed` | `server.js:10` trivy stripe |
+| `716e7b6e29e23bef` | `server.js:14` detect-child-process |
+| `ca775a3edfd10766` | `server.js:38` using-http-server |
+| `34b2206c63308aa5` | minimist CVE-2021-44906 |
+| `bb6f78115727cde4` | 根 `Dockerfile` DS-0001 |
+| `7af62459ab89a236` | node-api `Dockerfile` DS-0002 |
+
+兩邊的環境完全不同：**本機是 macOS / arm64 的 Docker、掃描路徑 `/src`；CI 是 GitHub 的 ubuntu / amd64 runner、掃描路徑 `.`**。
+`normalize_path()` 把兩者都收斂成 `app/app.py`，所以 fingerprint 一致。
+
+意義：fingerprint 是**跨環境穩定的識別鍵**，不是只在單一機器上自洽。這讓 D5 有兩個選項成立 ——
+(a) 把 baseline 結果存成 artifact 跨 run 重用（省掉 base 掃描的 ×2 時間）；
+(b) 開發者本機算出的 fingerprint 可以直接對照 CI 的結果做 waiver / 抑制清單。
 
 ## 工程決策
 
