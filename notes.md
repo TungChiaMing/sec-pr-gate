@@ -229,3 +229,100 @@ Error: Process completed with exit code 1.
 - 不擋 merge（Day 5 的 `policy.yml`）
 - 不做 TP/FP 判斷（Day 4 的 agent）
 - 不用 cosign 驗 Trivy 的 `.sigstore.json`（checksum 只證明 bytes 沒被改，簽章才證明是誰發的）
+
+---
+
+# D3 — Normalize / Fingerprint / Baseline diff（2026-09-06）
+
+## 掃描規模（語言無關，掃整個 repo）
+
+`SEMGREP_RULESETS = p/default p/secrets p/owasp-top-ten` · `TRIVY_SCANNERS = vuln,secret,misconfig`
+
+| | main (base) | feat/debug-eval (head) |
+|---|---|---|
+| Semgrep raw | 20 | 23 |
+| Trivy raw | 74 | 74 |
+| **正規化後 unique** | **94** | **97** |
+
+分類：`sast` 18 · `sca` 67 · `secret` 4 · `misconfig` 5（base）
+
+Semgrep 20 筆的分布：`app/app.py` 13、`samples/node-api/server.js` 4、`samples/node-api/Dockerfile` 1、`testdata/vuln_app.py` 2。
+**`app/app.py` 仍是 13 筆 —— ruleset 沒被 D3 動過的證據。**
+
+## server.js 的 golden labels（D6 量 precision / recall 用）
+
+| 行 | 埋的東西 | 掃描器結果 | 標記 |
+|---|---|---|---|
+| 10 | hardcoded stripe key | `detected-stripe-api-key` + Trivy `stripe-secret-token` | **TP，偵測成功** |
+| 14 | command injection (`child_process.exec`) | `javascript.lang.security.detect-child-process` (ERROR) | **TP，偵測成功** |
+| 19 | eval RCE | `javascript.browser.security.eval-detected` (WARNING) | **TP，偵測成功** |
+| 24 | SSRF (`axios.get` 使用者控制 URL) | **無任何規則命中** | **TP，漏報 (FN)** |
+| 30 | md5 當 cache key | 無 | 設計為情境型 FP，**未觸發** |
+| 35 | `Math.random()` 當 jitter | 無 | 設計為情境型 FP，**未觸發** |
+| 38 | `http.createServer` 綁 127.0.0.1 | `problem-based-packs.insecure-transport.js-node.using-http-server` (WARNING) | **非預期的 FP** |
+
+### 三個要帶進 D4 / D6 的結論
+
+1. **跨語言覆蓋率不對等。** 同一個 SSRF 漏洞，Python 版被 `ssrf-requests` 抓到，JS 版**完全沒有規則命中**。這是 false negative，不是誤報 —— D6 的 recall 分母裡就少了這一筆。「加 ruleset 就會變好」是不成立的假設，要量過才知道。
+2. **規則的框架歸因不可信，兩種語言都一樣。** eval 那條是 `javascript.**browser**.security.eval-detected`，打在 Node 程式上；D1 則是 `python.**django**.*` 打在 Flask 上。D4 的 prompt 要教 agent：**rule id 的框架前綴只是分類標籤，要看實際 import 與呼叫**。
+3. **設計的 FP 沒出現，沒設計的 FP 出現了。** 預期的 md5 / `Math.random()` 兩個情境型誤報在這組 ruleset 下都沒觸發，反而多出一個 `using-http-server`。**FP 的組成是 ruleset 的函數，不是程式碼的函數** —— 所以 golden labels 必須綁定 ruleset 版本才有意義。
+
+## Trivy
+
+- `samples/node-api/package-lock.json`：minimist `CVE-2021-44906` (CRITICAL)、lodash `CVE-2021-23337` (HIGH)、axios `CVE-2021-3749` (HIGH) 都在。
+- **axios@0.21.1 一個套件就貢獻 30 筆 CVE**（HIGH 11 / MEDIUM 18 / LOW 1）。這是 SCA 的量級問題最好的例子：一個過期套件就能淹掉整份報告，人工不可能逐筆看。
+- misconfig 5 筆：`samples/node-api/Dockerfile` 的 DS-0001 / DS-0002 / DS-0026，**加上 repo 根目錄自己的 `Dockerfile` 的 DS-0001（`FROM aquasec/trivy:latest`）與 DS-0026**。
+  - 掃描器被自己的規則掃到。D2 報告裡我寫過「這是還沒補上的一刀」，現在工具自己抓出來了。
+  - 根 Dockerfile **沒有** DS-0002，因為有 `USER scanner` —— 這是防線有效的反證。
+- secret 4 筆 = 兩個檔案 × 兩個工具。跨工具重複刻意不合併（`tool` 是 fingerprint 的一部分），判斷是不是同一件事是 D4 agent 的工作。
+
+## Baseline diff（本機）
+
+```
+make scan && make baseline && make diff
+new=3 fixed=0 unchanged=94
+  HIGH     sast  app/app.py:73  python.flask.security.injection.user-eval.eval-injection
+  MEDIUM   sast  app/app.py:71  python.django.security.injection.code.user-eval.user-eval
+  MEDIUM   sast  app/app.py:73  python.lang.security.audit.eval-detected.eval-detected
+```
+
+D2 的 CI（`p/python p/flask p/secrets`）對同一個 eval 只有 2 條規則，D3 的語言無關 ruleset 有 3 條。
+**判準是「差集全部是 eval 相關、全在 `app/app.py`、`fixed=0`」，不是數字等於 2。**
+
+## fingerprint 不含行號 —— 兩組證據
+
+**(a) 合成測試**：把所有 Semgrep finding 的行號 +5，跟原始版本 diff。
+
+| fingerprint 組成 | 結果 |
+|---|---|
+| 不含行號（正式版） | `new=0 fixed=0 unchanged=39` |
+| 改成含行號（反向對照） | `new=13 fixed=13 unchanged=26` |
+
+**(b) 真環境測試**：在 `app/app.py` 最前面插入 3 行註解後重掃。
+
+```
+行號變動但仍判為 unchanged：13 筆
+  app/app.py  15 -> 18    28 -> 31    31 -> 34 (×4)
+  app/app.py  40 -> 43 (×3)   46 -> 49   48 -> 51   55 -> 58   61 -> 64
+new 仍為 3、unchanged 仍為 94
+```
+
+`app/app.py` 的每一筆都整齊往下 3 行，**沒有一筆被誤判成新的**。含行號的 fingerprint 在這個情境會產生 13 筆假的 new + 13 筆假的 fixed —— 對 legacy repo 來說，這種 gate 第一天就會被開發者關掉。
+
+註：原本以為 `/debug/eval` 這個 PR 本身就會造成位移，實際查 DB 是 **0 筆**位移 —— 因為插入點在第 70 行，而 `app/app.py` 唯一在它下面的 `/health` 沒有 finding，md5 那筆在第 59–61 行反而在插入點**上面**。所以位移不變性是靠上面兩個測試證明的，不是靠這個 PR。
+
+## Run URLs
+
+| 用途 | 結果 | URL |
+|---|---|---|
+| main baseline（無 base，全部視為 new） | | `<待填>` |
+| PR #1（vs base） | | `<待填>` |
+
+CI `counts.new` = `<待填>`
+
+## 工程決策
+
+- **輸出目錄改為 `out/`**（原 `reports/`），本機與 CI 一致；`reports/` 保留但不再寫入，且已加入掃描排除（gitignored 的檔案若被掃到，本機與 CI 會不一致）。
+- **`make scan` 不再做門檻判定**（D3 原則：掃描只產資料），舊行為移到 `make gate`。
+- **D3 的工具全部在 image 裡**：`lock` / `baseline` / `diff` / `findings` 都是 entrypoint 子命令，Mac 上不用裝 node / npm / semgrep。
+- **baseline 用拋棄式 git worktree**（`/tmp/spg-base`，容器內），deterministic、不依賴歷史 artifact，代價是掃描時間 ×2。`trap cleanup EXIT` 保證中途失敗也會清掉。
