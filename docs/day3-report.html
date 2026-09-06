@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>:root{color-scheme:light dark}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>sec-pr-gate 指紋與差集</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap');
+
+:root{
+  --paper:#EEF0F4;
+  --surface:#FFFFFF;
+  --surface-2:#F7F8FA;
+  --ink:#141821;
+  --ink-2:#39414E;
+  --muted:#6B7484;
+  --line:#D5DAE3;
+  --line-soft:#E5E8EE;
+  --accent:#2A3D8F;
+  --accent-soft:#E3E7F6;
+  --crit:#A32218;
+  --high:#B0551B;
+  --med:#7A6215;
+  --low:#3C6382;
+  --pass:#256B4A;
+  --shadow:0 1px 2px rgba(20,24,33,.06), 0 8px 24px -12px rgba(20,24,33,.18);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0D1016;
+    --surface:#161B24;
+    --surface-2:#1B212C;
+    --ink:#E9ECF2;
+    --ink-2:#BFC6D2;
+    --muted:#8B94A3;
+    --line:#2A3140;
+    --line-soft:#222836;
+    --accent:#93A6EA;
+    --accent-soft:#1D2440;
+    --crit:#E9796C;
+    --high:#E0975E;
+    --med:#CDB25C;
+    --low:#82B0D1;
+    --pass:#6FC096;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0D1016;
+  --surface:#161B24;
+  --surface-2:#1B212C;
+  --ink:#E9ECF2;
+  --ink-2:#BFC6D2;
+  --muted:#8B94A3;
+  --line:#2A3140;
+  --line-soft:#222836;
+  --accent:#93A6EA;
+  --accent-soft:#1D2440;
+  --crit:#E9796C;
+  --high:#E0975E;
+  --med:#CDB25C;
+  --low:#82B0D1;
+  --pass:#6FC096;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:"Source Serif 4","Noto Serif TC",Georgia,"Songti TC",serif;
+  font-size:17px;
+  line-height:1.75;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px 96px}
+
+/* ---------- masthead ---------- */
+.masthead{
+  padding:56px 0 32px;
+  border-bottom:2px solid var(--ink);
+}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--accent);margin:0 0 14px;font-weight:600;
+}
+h1{
+  font-family:Archivo,"Helvetica Neue",Arial,"PingFang TC",sans-serif;
+  font-weight:700;font-size:clamp(38px,6vw,60px);line-height:1.04;
+  letter-spacing:-.025em;margin:0;text-wrap:balance;
+}
+.standfirst{
+  font-size:19px;color:var(--ink-2);max-width:60ch;margin:18px 0 0;
+}
+.meta{
+  display:flex;flex-wrap:wrap;gap:0 34px;margin-top:28px;
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:12.5px;
+}
+.meta div{display:flex;flex-direction:column;gap:2px}
+.meta dt{color:var(--muted);letter-spacing:.08em;text-transform:uppercase;font-size:11px}
+.meta dd{margin:0;color:var(--ink);font-weight:500}
+
+/* ---------- sections ---------- */
+section{
+  display:grid;grid-template-columns:1fr;gap:0;
+  padding:52px 0;border-bottom:1px solid var(--line-soft);
+}
+@media (min-width:940px){
+  section{grid-template-columns:132px minmax(0,1fr);gap:32px}
+}
+.rail{
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);padding-top:12px;
+}
+.rail b{display:block;color:var(--accent);font-size:22px;letter-spacing:0;font-weight:600;line-height:1}
+.body{min-width:0;display:flex;flex-direction:column;gap:22px}
+
+h2{
+  font-family:Archivo,"Helvetica Neue",Arial,"PingFang TC",sans-serif;
+  font-weight:600;font-size:clamp(25px,3.4vw,33px);line-height:1.2;
+  letter-spacing:-.015em;margin:0;text-wrap:balance;
+}
+h3{
+  font-family:Archivo,"Helvetica Neue",Arial,"PingFang TC",sans-serif;
+  font-weight:600;font-size:18px;margin:0;letter-spacing:-.005em;
+}
+p{margin:0;max-width:66ch}
+.body > p, .body > ul{color:var(--ink-2)}
+ul{margin:0;padding-left:1.2em;max-width:66ch;display:flex;flex-direction:column;gap:8px}
+li::marker{color:var(--muted)}
+strong{font-weight:600;color:var(--ink)}
+code{
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  font-size:.86em;background:var(--surface-2);border:1px solid var(--line-soft);
+  border-radius:3px;padding:1px 5px;color:var(--ink);
+}
+a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1px}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+
+/* ---------- pipeline ---------- */
+.pipe{
+  display:flex;flex-wrap:wrap;align-items:stretch;gap:10px;
+  background:var(--surface);border:1px solid var(--line);
+  padding:20px;border-radius:6px;overflow-x:auto;box-shadow:var(--shadow);
+}
+.stage{
+  flex:1 1 128px;min-width:128px;display:flex;flex-direction:column;gap:6px;
+  padding:12px 13px;background:var(--surface-2);border:1px solid var(--line-soft);
+  border-radius:4px;
+}
+.stage.split{background:var(--accent-soft);border-color:var(--accent)}
+.stage.gate{border-color:var(--crit)}
+.stage .k{
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+}
+.stage .v{
+  font-family:Archivo,Arial,"PingFang TC",sans-serif;font-weight:600;font-size:14.5px;
+  line-height:1.3;color:var(--ink);
+}
+.stage .n{font-size:12.5px;color:var(--muted);line-height:1.45;font-family:"Source Serif 4",Georgia,serif}
+.arrow{
+  align-self:center;color:var(--muted);font-family:"IBM Plex Mono",monospace;
+  font-size:15px;flex:0 0 auto;
+}
+
+/* ---------- tables ---------- */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{padding:10px 14px;text-align:left;border-bottom:1px solid var(--line-soft);white-space:nowrap}
+th{
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
+  font-weight:600;background:var(--surface-2);
+}
+tbody tr:last-child td{border-bottom:0}
+td.num{font-variant-numeric:tabular-nums;font-family:"IBM Plex Mono",Menlo,monospace}
+td.rule{font-family:"IBM Plex Mono",Menlo,monospace;font-size:12.5px;white-space:normal;min-width:20ch}
+
+.sev{
+  display:inline-flex;align-items:center;gap:6px;
+  font-family:"IBM Plex Mono",Menlo,monospace;font-size:11px;font-weight:600;
+  letter-spacing:.07em;
+}
+.sev::before{content:"";width:8px;height:8px;border-radius:2px;background:currentColor}
+.sev.c{color:var(--crit)} .sev.h{color:var(--high)} .sev.m{color:var(--med)}
+.sev.l{color:var(--low)} .sev.p{color:var(--pass)}
+
+/* ---------- answer block ---------- */
+.short{
+  background:var(--surface);border:1px solid var(--line);
+  border-left:3px solid var(--accent);
+  border-radius:0 5px 5px 0;padding:16px 20px;
+  display:flex;flex-direction:column;gap:6px;box-shadow:var(--shadow);
+}
+.short .k{
+  font-family:"IBM Plex Mono",Menlo,monospace;font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--accent);font-weight:600;
+}
+.short p{font-size:17px;color:var(--ink);max-width:62ch}
+
+.split2{display:grid;grid-template-columns:1fr;gap:14px}
+@media (min-width:700px){.split2{grid-template-columns:1fr 1fr}}
+.col{
+  background:var(--surface);border:1px solid var(--line);border-radius:5px;
+  padding:16px 18px;display:flex;flex-direction:column;gap:9px;
+}
+.col h3{font-size:16px}
+.col .tag{
+  font-family:"IBM Plex Mono",Menlo,monospace;font-size:11px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted);
+}
+.col p{font-size:15px;color:var(--ink-2);max-width:none}
+.col ul{font-size:15px;color:var(--ink-2);max-width:none;gap:6px}
+
+pre{
+  margin:0;background:var(--surface);border:1px solid var(--line);border-radius:5px;
+  padding:15px 17px;overflow-x:auto;
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:13px;line-height:1.65;
+  color:var(--ink);
+}
+pre .c{color:var(--muted)}
+pre .bad{color:var(--crit)}
+pre .good{color:var(--pass)}
+
+.caution{
+  background:var(--surface-2);border:1px dashed var(--line);border-radius:5px;
+  padding:14px 17px;font-size:15px;color:var(--ink-2);
+}
+.caution b{color:var(--ink)}
+
+footer{padding:44px 0 0;color:var(--muted);font-size:14px;display:flex;flex-direction:column;gap:12px}
+footer ul{max-width:none;gap:5px;font-size:13.5px}
+footer a{color:var(--accent)}
+
+@media (prefers-reduced-motion:no-preference){
+  .stage,.col,.short{transition:border-color .15s ease}
+}
+</style>
+<style>
+/* ---------- D2 追加元件 ---------- */
+.runs{display:flex;flex-direction:column;gap:0;border:1px solid var(--line);border-radius:6px;background:var(--surface);overflow:hidden}
+.run{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;padding:13px 16px;border-bottom:1px solid var(--line-soft);align-items:baseline}
+.run:last-child{border-bottom:0}
+.run .badge{
+  font-family:"IBM Plex Mono",Menlo,monospace;font-size:10.5px;font-weight:600;letter-spacing:.08em;
+  padding:3px 8px;border-radius:3px;white-space:nowrap;grid-row:span 2;align-self:center;
+}
+.run .badge.ok{color:var(--pass);border:1px solid currentColor}
+.run .badge.bad{color:var(--crit);border:1px solid currentColor}
+.run .what{font-family:Archivo,Arial,"PingFang TC",sans-serif;font-weight:600;font-size:15px;color:var(--ink)}
+.run .id{font-family:"IBM Plex Mono",Menlo,monospace;font-size:12px;color:var(--muted);word-break:break-all}
+.chain{display:flex;flex-direction:column;gap:0;counter-reset:layer}
+.layer{
+  display:grid;grid-template-columns:auto 1fr;gap:0 16px;padding:14px 0;
+  border-bottom:1px solid var(--line-soft);align-items:start;
+}
+.layer:last-child{border-bottom:0}
+.layer .n{
+  font-family:"IBM Plex Mono",Menlo,monospace;font-size:11px;letter-spacing:.1em;
+  color:var(--accent);font-weight:600;padding-top:3px;white-space:nowrap;
+}
+.layer .t{font-family:Archivo,Arial,"PingFang TC",sans-serif;font-weight:600;font-size:15.5px;color:var(--ink);margin-bottom:4px}
+.layer .d{font-size:15px;color:var(--ink-2)}
+.layer.weak .n{color:var(--crit)}
+.drill{
+  background:var(--surface);border:1px solid var(--crit);border-radius:5px;
+  padding:16px 18px;display:flex;flex-direction:column;gap:10px;
+}
+.drill .k{font-family:"IBM Plex Mono",Menlo,monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--crit);font-weight:600}
+</style>
+<style>
+/* ---------- D3 追加元件 ---------- */
+.fp{
+  font-family:"IBM Plex Mono",Menlo,monospace;font-size:12px;
+  background:var(--surface-2);border:1px solid var(--line-soft);border-radius:3px;padding:1px 5px;
+}
+.schema{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;
+  background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:16px;
+}
+.field{
+  display:flex;flex-direction:column;gap:2px;padding:8px 10px;
+  background:var(--surface-2);border:1px solid var(--line-soft);border-radius:4px;
+}
+.field.key{background:var(--accent-soft);border-color:var(--accent)}
+.field .n{font-family:"IBM Plex Mono",Menlo,monospace;font-size:12.5px;font-weight:600;color:var(--ink)}
+.field .d{font-size:11.5px;color:var(--muted);line-height:1.35}
+.verdict{
+  display:inline-flex;align-items:center;gap:5px;font-family:"IBM Plex Mono",Menlo,monospace;
+  font-size:10.5px;font-weight:600;letter-spacing:.06em;padding:2px 7px;border-radius:3px;
+  border:1px solid currentColor;white-space:nowrap;
+}
+.verdict.tp{color:var(--pass)} .verdict.fn{color:var(--crit)} .verdict.fp{color:var(--high)}
+.verdict.none{color:var(--muted)}
+.evidence{
+  display:grid;grid-template-columns:1fr;gap:0;
+  border:1px solid var(--line);border-radius:6px;background:var(--surface);overflow:hidden;
+}
+.ev{display:grid;grid-template-columns:auto 1fr;gap:2px 14px;padding:14px 16px;border-bottom:1px solid var(--line-soft);align-items:baseline}
+.ev:last-child{border-bottom:0}
+.ev .tag{font-family:"IBM Plex Mono",Menlo,monospace;font-size:11px;letter-spacing:.1em;color:var(--accent);font-weight:600;grid-row:span 2;align-self:center;white-space:nowrap}
+.ev .t{font-family:Archivo,Arial,"PingFang TC",sans-serif;font-weight:600;font-size:15px;color:var(--ink)}
+.ev .d{font-size:14.5px;color:var(--ink-2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">Day 3 · Normalize / Fingerprint / Diff</p>
+    <h1>sec-pr-gate 指紋與差集</h1>
+    <p class="standfirst">把兩個工具、四種子結構、兩種語言的輸出壓成同一張表，給每一筆算一個不含行號的指紋，然後只對「這個 PR 新增的」做判斷。沒有這一層，gate 在 legacy repo 第一天就會被開發者關掉。</p>
+    <dl class="meta">
+      <div><dt>日期</dt><dd>2026-09-06</dd></div>
+      <div><dt>正規化後</dt><dd>94 findings</dd></div>
+      <div><dt>PR 差集</dt><dd>new 3 · fixed 0</dd></div>
+      <div><dt>CI ↔ 本機</dt><dd>逐字相同</dd></div>
+      <div><dt>跨環境指紋</dt><dd><span class="sev p">8 / 8 吻合</span></dd></div>
+    </dl>
+  </header>
+
+  <section>
+    <div class="rail"><b>01</b>問題</div>
+    <div class="body">
+      <h2>沒有 baseline diff 的 gate 活不過第一天</h2>
+      <p>D2 之後 pipeline 已經會掃、會上傳、會呈現。但要真的擋 PR，還缺一件事：<strong>知道哪些 finding 是這個 PR 帶進來的</strong>。</p>
+      <p>一個有五年歷史的 repo，第一次接上掃描器可能吐出 300 筆 finding。如果 gate 對總數設門檻，check 會永遠是紅的 —— 開發者的理性反應不是去修那 300 筆，而是<strong>把這個 check 關掉</strong>。所有商用產品（Semgrep AppSec Platform、GitHub code scanning、DefectDojo）走的都是同一條流水線：</p>
+
+      <div class="pipe">
+        <div class="stage"><span class="k">輸入</span><span class="v">兩種 JSON</span><span class="n">Semgrep + Trivy（三種子結構）</span></div>
+        <span class="arrow">→</span>
+        <div class="stage split"><span class="k">normalize</span><span class="v">統一 schema</span><span class="n">語言無關、工具無關</span></div>
+        <span class="arrow">→</span>
+        <div class="stage split"><span class="k">fingerprint</span><span class="v">穩定識別鍵</span><span class="n">不含行號</span></div>
+        <span class="arrow">→</span>
+        <div class="stage"><span class="k">store</span><span class="v">SQLite</span><span class="n">冪等、可重跑</span></div>
+        <span class="arrow">→</span>
+        <div class="stage gate"><span class="k">diff</span><span class="v">head − base</span><span class="n">只對新增的做決定</span></div>
+      </div>
+
+      <p><code>findings.py</code> <strong>只用 Python 標準函式庫</strong>（json / sqlite3 / hashlib / argparse）。這是刻意的：D5 要把整套做成 reusable workflow，任何 consumer repo 都不該為了用這個 gate 而多裝東西。</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>02</b>schema</div>
+    <div class="body">
+      <h2>一張表吃下四種東西</h2>
+      <p>Semgrep 與 Trivy 的 JSON 是完全不同的結構，而 Trivy 自己又分 Vulnerabilities / Secrets / Misconfigurations 三種。統一之後長這樣（藍色是 fingerprint 的組成）：</p>
+
+      <div class="schema">
+        <div class="field key"><span class="n">tool</span><span class="d">semgrep / trivy</span></div>
+        <div class="field key"><span class="n">category</span><span class="d">sast · sca · secret · misconfig</span></div>
+        <div class="field key"><span class="n">rule_id</span><span class="d">check_id / RuleID / AVDID</span></div>
+        <div class="field key"><span class="n">path</span><span class="d">正規化後的相對路徑</span></div>
+        <div class="field key"><span class="n">pkg</span><span class="d">套件名（SCA）</span></div>
+        <div class="field key"><span class="n">cve</span><span class="d">CVE 編號（SCA）</span></div>
+        <div class="field key"><span class="n">snippet</span><span class="d">壓縮空白後的程式碼</span></div>
+        <div class="field"><span class="n">severity</span><span class="d">統一四級</span></div>
+        <div class="field"><span class="n">line / end_line</span><span class="d">顯示用，不進指紋</span></div>
+        <div class="field"><span class="n">installed_version</span><span class="d">現用版本</span></div>
+        <div class="field"><span class="n">fixed_version</span><span class="d">修好的版本</span></div>
+        <div class="field"><span class="n">title / message</span><span class="d">CWE / PrimaryURL</span></div>
+        <div class="field"><span class="n">raw</span><span class="d">原始 JSON 物件</span></div>
+      </div>
+
+      <p><strong>severity 統一成 CRITICAL / HIGH / MEDIUM / LOW</strong>（Semgrep 的 ERROR→HIGH、WARNING→MEDIUM、INFO→LOW），policy 才能用一個門檻寫完。<code>raw</code> 保留原始物件，D4 的 agent 要 Semgrep 的 CWE metadata 或 Trivy 的 PrimaryURL 時直接取，不用回頭解析兩種格式。</p>
+
+      <div class="caution"><b>severity 對齊不是無損的。</b>Semgrep 的 ERROR 與 Trivy 的 HIGH 是兩套獨立的評分體系，硬映射成同一級會丟掉資訊。這裡接受這個損失，因為 gate 需要單一門檻；真正的嚴重度判斷留給 D4 的 agent，它看得到 <code>raw</code> 裡的完整脈絡。</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>Q1</b>指紋</div>
+    <div class="body">
+      <h2>為什麼 fingerprint 刻意不含行號？</h2>
+
+      <div class="short">
+        <span class="k">短答</span>
+        <p><strong>因為在檔案上方插入程式碼，會讓下方每一筆 finding 的行號位移。</strong>含行號的指紋會把所有舊 finding 判成新的 —— gate 會在一個只加了三行註解的 PR 上爆掉。</p>
+      </div>
+
+      <p>指紋的組成是 <span class="fp">sha256(tool | category | rule_id | path | pkg | cve | 正規化 snippet | ordinal)</span> 取前 16 個 hex。三個設計決定：</p>
+
+      <ul>
+        <li><strong>snippet 先壓縮空白</strong> —— 重新縮排、格式化不算變更</li>
+        <li><strong>ordinal</strong> 區分同一檔案內完全相同的兩段程式碼</li>
+        <li><strong>path 要正規化</strong> —— 本機掃 <code>/src</code>、CI 掃 <code>.</code>、base 掃 <code>base/</code>，三者要收斂成同一個字串</li>
+      </ul>
+
+      <p>Semgrep CE 的 JSON 雖然有 <code>extra.fingerprint</code> 欄位，但值是字串 <code>"requires login"</code>（1.176.1 實測），所以必須自己算。GitHub Code Scanning 的 SARIF <code>partialFingerprints</code> 走的是同一個思路。</p>
+
+      <h3>兩組證據</h3>
+
+      <div class="evidence">
+        <div class="ev">
+          <span class="tag">合成測試</span>
+          <div>
+            <div class="t">把所有 finding 的行號 +5，跟原始版本 diff</div>
+            <div class="d">不含行號：<strong>new 0 · fixed 0 · unchanged 39</strong>　｜　改成含行號：<strong>new 13 · fixed 13 · unchanged 26</strong></div>
+          </div>
+        </div>
+        <div class="ev">
+          <span class="tag">真環境</span>
+          <div>
+            <div class="t">在 <code>app/app.py</code> 最前面插入三行註解後重掃</div>
+            <div class="d"><strong>13 筆 finding 的行號整齊往下 3 行</strong>（15→18、28→31、31→34 ×4、40→43 ×3、46→49、48→51、55→58、61→64），全部仍判為 unchanged，<code>new</code> 維持 3。</div>
+          </div>
+        </div>
+      </div>
+
+      <p>含行號的版本在這個情境會產生 <strong>13 筆假的 new 加 13 筆假的 fixed</strong>。對一個只是調整格式的 PR 來說，這種 gate 的訊號完全是噪音。</p>
+
+      <div class="caution"><b>一個誠實的註記：</b>原本以為 <code>/debug/eval</code> 這個 PR 本身就會造成位移，實際查資料庫是 <b>0 筆</b>。因為插入點在第 70 行，而 <code>app/app.py</code> 唯一在它下面的 <code>/health</code> 沒有 finding，md5 那筆在第 59–61 行反而在插入點<em>上面</em>。位移不變性是靠上面兩個刻意設計的測試證明的，不是靠這個 PR 順便驗到的。</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>03</b>結果</div>
+    <div class="body">
+      <h2>94 → 97，差集剛好 3</h2>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th></th><th>main (base)</th><th>feat/debug-eval (head)</th></tr></thead>
+          <tbody>
+            <tr><td>Semgrep raw</td><td class="num">20</td><td class="num">23</td></tr>
+            <tr><td>Trivy raw</td><td class="num">74</td><td class="num">74</td></tr>
+            <tr><td><strong>正規化後 unique</strong></td><td class="num"><strong>94</strong></td><td class="num"><strong>97</strong></td></tr>
+            <tr><td>sast / sca / secret / misconfig</td><td class="num">18 / 67 / 4 / 5</td><td class="num">21 / 67 / 4 / 5</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><code>new 3 · fixed 0 · unchanged 94</code> —— base 的每一筆都活著，只多出 <code>app/app.py</code> 的三條 eval 規則。<strong>CI 跑出來的 counts 與本機 <code>make diff</code> 逐字相同</strong>，連行號（71 / 73 / 73）都一致。</p>
+
+      <h3>指紋跨環境穩定：8 / 8</h3>
+      <p>從 CI 的 Job Summary 抽 8 個指紋回本機資料庫查詢，<strong>全部找得到</strong>。兩邊環境完全不同：本機是 macOS / arm64 的 Docker、掃描路徑 <code>/src</code>；CI 是 GitHub 的 ubuntu / amd64 runner、掃描路徑 <code>.</code>。</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Fingerprint</th><th>Finding</th></tr></thead>
+          <tbody>
+            <tr><td class="rule">cf14c260dee3b4c2</td><td><code>app/app.py:61</code> md5</td></tr>
+            <tr><td class="rule">b8dd72a3be4815ed</td><td><code>server.js:10</code> trivy stripe</td></tr>
+            <tr><td class="rule">716e7b6e29e23bef</td><td><code>server.js:14</code> detect-child-process</td></tr>
+            <tr><td class="rule">34b2206c63308aa5</td><td>minimist CVE-2021-44906</td></tr>
+            <tr><td class="rule">bb6f78115727cde4</td><td>根 <code>Dockerfile</code> DS-0001</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>這件事的價值不只是「有跑對」。指紋跨環境穩定，代表 D5 多了兩個選項：<strong>把 baseline 存成 artifact 跨 run 重用</strong>（省掉 base 掃描的 ×2 時間），或<strong>讓開發者用本機算出的指紋做 waiver 清單</strong>，CI 認得。</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>04</b>Node 範例</div>
+    <div class="body">
+      <h2>加一個 JS 範例，換來三個沒預期的發現</h2>
+      <p><code>samples/node-api/server.js</code> 對照 D1 的 Flask app 埋了四個真漏洞加兩個情境型誤報。實際掃出來的結果跟設計的不一樣 —— 而這正是它的價值。</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>行</th><th>埋的東西</th><th>掃描結果</th><th>判定</th></tr></thead>
+          <tbody>
+            <tr><td class="num">10</td><td>hardcoded stripe key</td><td class="rule">detected-stripe-api-key + trivy stripe-secret-token</td><td><span class="verdict tp">TP 命中</span></td></tr>
+            <tr><td class="num">14</td><td>command injection</td><td class="rule">javascript.lang.security.detect-child-process</td><td><span class="verdict tp">TP 命中</span></td></tr>
+            <tr><td class="num">19</td><td>eval RCE</td><td class="rule">javascript.<strong>browser</strong>.security.eval-detected</td><td><span class="verdict tp">TP 命中</span></td></tr>
+            <tr><td class="num">24</td><td>SSRF（使用者控制 URL）</td><td class="rule">—— 無任何規則命中</td><td><span class="verdict fn">漏報 FN</span></td></tr>
+            <tr><td class="num">30</td><td>md5 當 cache key</td><td class="rule">——</td><td><span class="verdict none">設計為 FP，未觸發</span></td></tr>
+            <tr><td class="num">35</td><td>Math.random() 當 jitter</td><td class="rule">——</td><td><span class="verdict none">設計為 FP，未觸發</span></td></tr>
+            <tr><td class="num">38</td><td>http server 綁 127.0.0.1</td><td class="rule">problem-based-packs...using-http-server</td><td><span class="verdict fp">非預期的 FP</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="split2">
+        <div class="col">
+          <span class="tag">發現一</span>
+          <h3>跨語言覆蓋率不對等</h3>
+          <p>同一個 SSRF 漏洞，Python 版被 <code>ssrf-requests</code> 抓到，<strong>JS 版完全沒有規則命中</strong>。這是 false negative，不是誤報 —— D6 的 recall 分母裡就少了這一筆。</p>
+          <p>「加 ruleset 就會變好」是要驗證的假設，不是前提。</p>
+        </div>
+        <div class="col">
+          <span class="tag">發現二</span>
+          <h3>誤報是 ruleset 的函數</h3>
+          <p>設計的兩個情境型 FP 都沒觸發，反而多出一個沒設計的。<strong>FP 的組成取決於 ruleset，不取決於程式碼</strong>。</p>
+          <p>所以 D6 的 golden labels 必須綁定 ruleset 版本，換一組規則就要重新標。</p>
+        </div>
+      </div>
+
+      <p><strong>發現三：規則的框架歸因不可信，兩種語言都一樣。</strong>eval 那條是 <code>javascript.<strong>browser</strong>.security.eval-detected</code>，打在 Node 程式上；D1 則是 <code>python.<strong>django</strong>.*</code> 打在 Flask 上。D4 的 prompt 要教 agent：rule id 的框架前綴只是分類標籤，判斷要看實際 import 與呼叫關係。</p>
+
+      <div class="caution"><b>順帶一提：掃描器被自己的規則掃到。</b>Trivy 抓到 repo 根目錄自己的 <code>Dockerfile</code> 有 DS-0001（<code>FROM aquasec/trivy:latest</code>）—— 這正是 D2 報告裡寫的「還沒補上的一刀」。而 DS-0002（root user）沒命中，因為有 <code>USER scanner</code>。防線有效與否，同一個檔案上同時有正反兩面的證據。</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>Q2</b>量級</div>
+    <div class="body">
+      <h2>為什麼不能直接對總數設門檻？</h2>
+
+      <div class="short">
+        <span class="k">短答</span>
+        <p><strong>因為 SCA 的量級跟人的注意力不在同一個數量級。</strong>這個 repo 裡，<code>axios@0.21.1</code> 一個過期套件就貢獻了 30 筆 CVE。</p>
+      </div>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>來源</th><th>Findings</th><th>性質</th></tr></thead>
+          <tbody>
+            <tr><td>axios@0.21.1</td><td class="num">30</td><td>一個 2021 年的套件，HIGH 11 / MEDIUM 18 / LOW 1</td></tr>
+            <tr><td><code>app/requirements.txt</code></td><td class="num">25</td><td>D1 就存在的既有債務</td></tr>
+            <tr><td><code>testdata/</code></td><td class="num">12</td><td>測試 fixture，含全部 3 個 PyYAML CRITICAL</td></tr>
+            <tr><td><strong>這個 PR 真正新增的</strong></td><td class="num"><strong>3</strong></td><td>都在 <code>app/app.py</code> 的 eval 那幾行</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>94 比 3。如果 gate 看的是總數，開發者每次都要在 94 筆裡找出跟自己有關的那 3 筆 —— 這件事做兩次就沒人做了。<strong>差集把訊噪比從 3 % 拉到 100 %。</strong></p>
+
+      <p>另一個 D2 就浮現、今天更明確的問題：<strong>全部 4 個 CRITICAL 裡有 3 個在 <code>testdata/</code></strong>，真正的 <code>app/</code> 一個 CRITICAL 都沒有。severity 單獨看會把 gate 導向錯的地方，所以 D5 的 <code>policy.yml</code> 必須帶路徑維度，而不是只有等級門檻。</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>Q3</b>去重</div>
+    <div class="body">
+      <h2>跨工具的「同一件事」為什麼刻意不合併？</h2>
+
+      <div class="short">
+        <span class="k">短答</span>
+        <p><strong>因為「這兩筆是不是同一個問題」本身就是需要判斷的事。</strong><code>tool</code> 是指紋的一部分，所以同一把 key 被 Semgrep 與 Trivy 抓到會是兩筆 —— 合併留給 D4 的 agent。</p>
+      </div>
+
+      <p>這個 repo 裡有兩把假的 Stripe key，各被兩個工具抓到，正規化後是 <strong>4 筆 secret</strong>：</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>檔案</th><th>工具</th><th>rule_id</th><th>severity</th></tr></thead>
+          <tbody>
+            <tr><td><code>app/app.py:15</code></td><td>Semgrep</td><td class="rule">generic.secrets...detected-stripe-api-key</td><td><span class="sev h">HIGH</span></td></tr>
+            <tr><td><code>app/app.py:15</code></td><td>Trivy</td><td class="rule">stripe-secret-token</td><td><span class="sev c">CRITICAL</span></td></tr>
+            <tr><td><code>server.js:10</code></td><td>Semgrep</td><td class="rule">generic.secrets...detected-stripe-api-key</td><td><span class="sev h">HIGH</span></td></tr>
+            <tr><td><code>server.js:10</code></td><td>Trivy</td><td class="rule">stripe-secret-token</td><td><span class="sev c">CRITICAL</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>看起來明顯該合併，但注意<strong>兩邊的 severity 不一樣</strong>（HIGH vs CRITICAL），rule_id 與偵測邏輯也不同。機械式合併必須決定「保留誰的 severity」，而那個決定沒有正確答案 —— 它取決於你更信任哪個工具在這類問題上的判斷。</p>
+
+      <p>更棘手的是同一工具內的重複：<code>app/app.py:31</code> 一段 SQL 字串拼接被 <strong>4 條 Semgrep 規則</strong>同時命中，<code>:40</code> 被 3 條。這些是同一個漏洞，但 rule_id 不同、信心不同、建議的修法也不同。</p>
+
+      <p>所以 D3 的立場是：<strong>正規化層只負責讓資料可比較，不做語意判斷。</strong>去重需要「這兩筆講的是不是同一件事」的推理，那是 D4 agent 讀得懂上下文之後才有辦法做的事 —— 而且它做完要能說明理由，機械規則做不到。</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>05</b>取捨</div>
+    <div class="body">
+      <h2>baseline 怎麼來</h2>
+      <p>三個方案，選了最笨但最可靠的那個：</p>
+
+      <div class="chain">
+        <div class="layer">
+          <span class="n">選用</span>
+          <div>
+            <div class="t">同一個 run 裡把 base commit 再掃一次</div>
+            <div class="d">本機用拋棄式 <code>git worktree</code>，CI 用 <code>actions/checkout</code> 到 <code>base/</code>。deterministic、不依賴任何歷史 artifact，consumer repo 的<strong>第一個 PR 就能用</strong>。代價是掃描時間 ×2（這個 repo 幾十秒）。</div>
+          </div>
+        </div>
+        <div class="layer weak">
+          <span class="n">替代 A</span>
+          <div>
+            <div class="t">把 main 的結果存成 artifact 跨 run 下載</div>
+            <div class="d">省時間，但要處理 retention 過期與「找不到 artifact」的 fallback。今天證明了指紋跨環境穩定，這條路 D5 可以重新評估。</div>
+          </div>
+        </div>
+        <div class="layer weak">
+          <span class="n">替代 B</span>
+          <div>
+            <div class="t">Semgrep 原生 <code>--baseline-commit</code></div>
+            <div class="d">只涵蓋 Semgrep，Trivy 沒有對應功能 —— 違反「工具無關」這個前提。</div>
+          </div>
+        </div>
+      </div>
+
+      <p><code>pull_request</code> 事件的 checkout 拿到的是 <code>refs/pull/N/merge</code>，也就是<strong>合併之後</strong>的樹；base 是 <code>github.event.pull_request.base.sha</code>。所以 <em>new = base 沒有、合併結果有</em> 的 findings —— 正好就是 gate 該擋的定義，而 PR 順手修掉的舊 finding 會落在 <code>fixed</code>。</p>
+
+      <h3>冪等性</h3>
+      <p><code>PRIMARY KEY (run_label, fingerprint)</code> 加 <code>INSERT OR IGNORE</code>，重新 ingest 同一個 run 會先 <code>DELETE</code> 再寫。實測連跑兩次數字完全相同 —— CI 重跑不會累積髒資料。</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>06</b>指令</div>
+    <div class="body">
+      <h2>全部走 Docker</h2>
+<pre>make lock       <span class="c"># 產生 package-lock.json（不裝 node_modules）</span>
+make scan       <span class="c"># head：掃整個 repo，只產資料不做門檻</span>
+make baseline   <span class="c"># base：拋棄式 worktree 裡掃 BASE_REF</span>
+make diff       <span class="c"># normalize + fingerprint + 算差集</span>
+
+make findings ARGS="show --run head --category secret"</pre>
+      <p><code>lock</code> / <code>baseline</code> / <code>diff</code> / <code>findings</code> 都是 image 的 entrypoint 子命令，node、npm、semgrep、trivy 全在容器裡 —— <strong>本機不用裝任何東西</strong>。repo 掛成讀寫（要寫 <code>out/</code>、lock 檔、<code>.git</code> 的 worktree），只有 <code>lint-ci</code> 維持唯讀掛載。</p>
+      <p><code>make scan</code> 從 D3 起不再做門檻判定 —— 掃描步驟只負責產生資料，決策留給 D5 的 <code>policy.yml</code>。舊的門檻行為保留在 <code>make gate</code>。</p>
+    </div>
+  </section>
+
+  <footer>
+    <p>下一步</p>
+    <ul>
+      <li><strong>D4</strong> — agent 讀 <code>raw</code> 裡的上下文，判 TP / FP，並處理跨工具與同工具內的重複</li>
+      <li><strong>D5</strong> — <code>policy.yml</code> 決定 exit code，帶路徑維度；把那個 job 設成 required check</li>
+      <li><strong>D6</strong> — 用 <code>server.js</code> 與 <code>app.py</code> 的 golden labels 量 precision / recall，包含 SSRF 那筆漏報</li>
+    </ul>
+  </footer>
+
+</div>
+
+</body>
+</html>

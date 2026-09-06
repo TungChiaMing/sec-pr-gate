@@ -234,6 +234,39 @@ Error: Process completed with exit code 1.
 
 # D3 — Normalize / Fingerprint / Baseline diff（2026-09-06）
 
+## 目標
+
+**讓 gate 只對「這個 PR 帶進來的問題」表態。**
+
+D2 結束時 pipeline 已經會掃、會上傳 SARIF、會呈現在 PR 上，但它沒有能力回答一個最基本的問題：
+*這 94 筆 finding 裡，哪幾筆是這次改動造成的？* 沒有這個能力，gate 就只能對總數設門檻 ——
+而一個有歷史的 repo 第一次接上掃描器就是 300 筆起跳，check 會永遠是紅的，
+**開發者的理性反應不是去修那 300 筆，是把 check 關掉。**
+
+所以今天的目標有三層：
+1. **可比較** —— 把兩個工具、四種子結構、兩種語言的輸出壓成同一張表
+2. **可識別** —— 給每一筆一個穩定的指紋，重新縮排、插入程式碼都不該讓它變成「新的」
+3. **可差集** —— head 減 base，只留下這個 PR 新增的
+
+## 今天做了什麼
+
+| 做的事 | 為什麼 |
+|---|---|
+| 加 `samples/node-api/`（JS + 刻意錯的 Dockerfile） | 驗證整條流水線是**語言無關**的。只有 Python 樣本的話，「工具無關 / 語言無關」是宣稱而不是事實 |
+| Semgrep ruleset 換成 `p/default p/secrets p/owasp-top-ten`、Trivy 加 `misconfig` | 同上。換成語言無關的 ruleset 才掃得到 JS 與 Dockerfile |
+| 寫 `scripts/findings.py`（normalize → fingerprint → SQLite → diff） | 這是 D4 agent 與 D5 policy 的共同輸入。**只用標準函式庫**，因為 D5 要做成 reusable workflow，consumer repo 不該為了用 gate 多裝東西 |
+| workflow 加 base 掃描與 diff job | 讓 CI 也算得出差集，而不只是本機。同時證明本機與 CI 的結果一致 |
+| 把 D3 的能力做成 image 的 entrypoint 子命令 | `lock` / `baseline` / `diff` / `findings` 全走 Docker，Mac 上不用裝 node / npm / semgrep |
+| `make scan` 拿掉門檻判定，另開 `make gate` | **掃描步驟只負責產生資料，決策放在獨立步驟。**門檻要等 D4 判完 TP/FP、D5 依 policy 決定 |
+| 輸出目錄 `reports/` → `out/`，並把 `reports/` 加入掃描排除 | gitignored 的檔案若被本機掃到、CI 掃不到，baseline diff 會對不上 |
+
+## 為什麼是這個順序
+
+先有樣本才知道 ruleset 夠不夠（結果發現 JS 的 SSRF 沒被抓到）；
+先有 normalize 才有指紋可算；先有指紋才有差集；
+先在本機把差集跑對，才有資格相信 CI 的結果 —— 而 CI 跑出來確實逐字相同。
+
+
 ## 掃描規模（語言無關，掃整個 repo）
 
 `SEMGREP_RULESETS = p/default p/secrets p/owasp-top-ten` · `TRIVY_SCANNERS = vuln,secret,misconfig`
@@ -352,3 +385,81 @@ PR 上一樣出現 GitHub Code Scanning 自己的 `Semgrep OSS` check 是紅的�
 - **`make scan` 不再做門檻判定**（D3 原則：掃描只產資料），舊行為移到 `make gate`。
 - **D3 的工具全部在 image 裡**：`lock` / `baseline` / `diff` / `findings` 都是 entrypoint 子命令，Mac 上不用裝 node / npm / semgrep。
 - **baseline 用拋棄式 git worktree**（`/tmp/spg-base`，容器內），deterministic、不依賴歷史 artifact，代價是掃描時間 ×2。`trap cleanup EXIT` 保證中途失敗也會清掉。
+
+
+## 問答
+
+### Q1 — fingerprint 為什麼不含行號？那兩個一模一樣的 finding 怎麼辦？
+
+**行號是 PR 最常改動、卻與漏洞本質最無關的東西。** 在檔案上方加一個 import
+就讓下面全部位移；含行號的 fingerprint 會把整個檔案的既有 findings 判成新增，
+gate 立刻失去意義。
+
+identity 用：`tool + category + rule_id + path + pkg + cve + 正規化 snippet`。
+snippet 先壓縮空白，所以**重新縮排、格式化不算變更**。
+
+**兩個一模一樣的 finding 用 `ordinal` 區分** —— 同一 key 出現第 N 次就把 N 放進雜湊。
+所以同一個檔案裡兩段一模一樣的 `eval(expr)` 是兩筆，不會互相吞掉。
+（註：目前這個 repo 沒有觸發到 ordinal 的實例 —— `app/app.py:31` 那 4 筆是 4 條**不同**的 rule_id，
+`testdata/vuln_app.py:8` 與 `app/app.py:40` 雖同一條規則但 path 不同。機制在，只是還沒被用到。）
+
+**已知代價：搬檔案會產生一新一舊。** `path` 是 identity 的一部分，所以 `git mv` 一個檔案，
+舊 path 的 findings 全變 fixed、新 path 的全變 new。可以再接一層 git rename detection 對一次，
+本週不做 —— 這是明確的已知限制，不是沒想到。
+
+**為什麼不用現成的：** Semgrep CE 的 JSON 有 `extra.fingerprint` 欄位，但值是字串
+`"requires login"`（1.176.1 實測）；GitHub SARIF 的 `partialFingerprints` 只在同一個工具內有意義。
+**跨工具的 identity 一定要自己定義。**
+
+實測證據見上面「fingerprint 不含行號 —— 兩組證據」與「跨環境穩定 8/8」兩節。
+
+---
+
+### Q2 — 同一個 run 掃兩次 vs. 存 baseline artifact，為什麼選前者？
+
+三個理由：
+
+1. **Deterministic** —— base 與 head 用**同一版工具、同一份 rules、同一份 Trivy DB** 掃。
+   diff 出來的差異只可能來自 code。存 artifact 的話，base 是幾天前用舊版 ruleset 掃的，
+   ruleset 更新就會讓一堆舊 finding 憑空變成「新增」（D2 已經證明 rule id 會漂移）。
+2. **零狀態** —— 不需要先在 main 跑過一次。consumer repo 接上的**第一個 PR 就能用**。
+   這對 D5 的 reusable workflow 是硬需求，不是加分項。
+3. **簡單** —— 不用處理 artifact retention 過期、跨 run 下載的 token 權限、
+   以及「找不到 baseline 時該怎麼辦」的 fallback 分支。
+
+**代價是 CI 時間 ×2。** 實測這個 repo：PR run 的 `sast` 46 秒、`sca` 32 秒（都含 base 掃描），
+還在可接受範圍。repo 大到分鐘級時再換成 artifact 或 Semgrep 的 `--baseline-commit` 做增量。
+
+值得記的是：**今天證明了 fingerprint 跨環境穩定（8/8），artifact 方案的技術前提已經成立** ——
+存下來的指紋在另一台 runner 上仍然對得起來。所以這個決定隨時可以翻案，
+翻案的門檻不是「能不能做」而是「掃描時間值不值得換那些複雜度」。
+
+---
+
+### Q3 — secret 被兩個工具抓到為什麼不合併？severity 統一後資訊不會丟嗎？
+
+**不合併，是因為「這兩筆是不是同一件事」本身就是需要判斷的事。**
+`tool` 是指紋的一部分，所以兩把 key × 兩個工具 = 4 筆 secret。
+
+兩個工具的 rule_id、信心、mask 方式都不同。最直接的證據是 **severity 不一樣**：
+
+| 檔案 | 工具 | rule_id | severity |
+|---|---|---|---|
+| `app/app.py:15` | Semgrep | `generic.secrets...detected-stripe-api-key` | HIGH |
+| `app/app.py:15` | Trivy | `stripe-secret-token` | CRITICAL |
+
+機械式合併必須決定「保留誰的 severity」，而那個決定沒有正確答案 ——
+它取決於你更信任哪個工具在這類問題上的判斷。在 normalize 層做這種判斷是越界。
+
+而且**不合併反而是更強的訊號**：D4 的 agent 會看到同一個 `path:line` 有兩個獨立工具的兩筆記錄，
+那比一筆合併過的記錄更值得相信。判斷留給看得到上下文、而且能說明理由的那一層。
+
+**severity 統一不會丟資訊，因為統一的是「決策用的欄位」，不是資料本身。**
+四級（CRITICAL / HIGH / MEDIUM / LOW）存在的目的只有一個：讓 D5 的 policy 能用單一門檻寫完
+（例如「HIGH 以上、且被 agent 判為 TP 的，擋 merge」）。
+`raw` 欄位保留了完整的原始 JSON 物件 —— Semgrep 的 confidence / likelihood / CWE、
+Trivy 的 CVSS 分數與 PrimaryURL 全都在，agent 與報表隨時取得到。
+
+同一工具內的重複也是同樣的立場：`app/app.py:31` 一段 SQL 拼接被 **4 條 Semgrep 規則**命中、
+`:40` 被 3 條。這些是同一個漏洞，但 rule_id 不同、建議的修法也不同。
+去重需要「這幾筆講的是不是同一件事」的推理 —— 那是 D4 的工作，機械規則做不到。
