@@ -1,0 +1,13 @@
+{
+  "name": "node-api-sample",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Intentionally vulnerable Node.js sample so JS findings flow through sec-pr-gate",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "axios": "0.21.1",
+    "lodash": "4.17.20",
+    "minimist": "1.2.5"
+  }
+}

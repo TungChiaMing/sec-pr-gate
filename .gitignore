@@ -4,3 +4,5 @@ users.db
 __pycache__/
 reports/
 .env
+node_modules/
+base/

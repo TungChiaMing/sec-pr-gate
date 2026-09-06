@@ -36,7 +36,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        ca-certificates curl git jq bash tini gnupg shellcheck; \
+        ca-certificates curl git jq bash tini gnupg shellcheck nodejs npm; \
     install -m 0755 -d /etc/apt/keyrings; \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
@@ -89,9 +89,10 @@ ENV XDG_CACHE_HOME=/cache \
 USER scanner
 WORKDIR /src
 
-# 冒煙測試：六個工具都叫得動才算 build 成功
+# 冒煙測試：所有工具都叫得動才算 build 成功
 RUN semgrep --version && trivy --version && gh --version \
- && actionlint --version && zizmor --version && shellcheck --version
+ && actionlint --version && zizmor --version && shellcheck --version \
+ && node --version && npm --version
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 CMD ["scan"]

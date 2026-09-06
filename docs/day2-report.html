@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>:root{color-scheme:light dark}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>sec-pr-gate CI 硬化</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap');
+
+:root{
+  --paper:#EEF0F4;
+  --surface:#FFFFFF;
+  --surface-2:#F7F8FA;
+  --ink:#141821;
+  --ink-2:#39414E;
+  --muted:#6B7484;
+  --line:#D5DAE3;
+  --line-soft:#E5E8EE;
+  --accent:#2A3D8F;
+  --accent-soft:#E3E7F6;
+  --crit:#A32218;
+  --high:#B0551B;
+  --med:#7A6215;
+  --low:#3C6382;
+  --pass:#256B4A;
+  --shadow:0 1px 2px rgba(20,24,33,.06), 0 8px 24px -12px rgba(20,24,33,.18);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0D1016;
+    --surface:#161B24;
+    --surface-2:#1B212C;
+    --ink:#E9ECF2;
+    --ink-2:#BFC6D2;
+    --muted:#8B94A3;
+    --line:#2A3140;
+    --line-soft:#222836;
+    --accent:#93A6EA;
+    --accent-soft:#1D2440;
+    --crit:#E9796C;
+    --high:#E0975E;
+    --med:#CDB25C;
+    --low:#82B0D1;
+    --pass:#6FC096;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0D1016;
+  --surface:#161B24;
+  --surface-2:#1B212C;
+  --ink:#E9ECF2;
+  --ink-2:#BFC6D2;
+  --muted:#8B94A3;
+  --line:#2A3140;
+  --line-soft:#222836;
+  --accent:#93A6EA;
+  --accent-soft:#1D2440;
+  --crit:#E9796C;
+  --high:#E0975E;
+  --med:#CDB25C;
+  --low:#82B0D1;
+  --pass:#6FC096;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:"Source Serif 4","Noto Serif TC",Georgia,"Songti TC",serif;
+  font-size:17px;
+  line-height:1.75;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px 96px}
+
+/* ---------- masthead ---------- */
+.masthead{
+  padding:56px 0 32px;
+  border-bottom:2px solid var(--ink);
+}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--accent);margin:0 0 14px;font-weight:600;
+}
+h1{
+  font-family:Archivo,"Helvetica Neue",Arial,"PingFang TC",sans-serif;
+  font-weight:700;font-size:clamp(38px,6vw,60px);line-height:1.04;
+  letter-spacing:-.025em;margin:0;text-wrap:balance;
+}
+.standfirst{
+  font-size:19px;color:var(--ink-2);max-width:60ch;margin:18px 0 0;
+}
+.meta{
+  display:flex;flex-wrap:wrap;gap:0 34px;margin-top:28px;
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:12.5px;
+}
+.meta div{display:flex;flex-direction:column;gap:2px}
+.meta dt{color:var(--muted);letter-spacing:.08em;text-transform:uppercase;font-size:11px}
+.meta dd{margin:0;color:var(--ink);font-weight:500}
+
+/* ---------- sections ---------- */
+section{
+  display:grid;grid-template-columns:1fr;gap:0;
+  padding:52px 0;border-bottom:1px solid var(--line-soft);
+}
+@media (min-width:940px){
+  section{grid-template-columns:132px minmax(0,1fr);gap:32px}
+}
+.rail{
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);padding-top:12px;
+}
+.rail b{display:block;color:var(--accent);font-size:22px;letter-spacing:0;font-weight:600;line-height:1}
+.body{min-width:0;display:flex;flex-direction:column;gap:22px}
+
+h2{
+  font-family:Archivo,"Helvetica Neue",Arial,"PingFang TC",sans-serif;
+  font-weight:600;font-size:clamp(25px,3.4vw,33px);line-height:1.2;
+  letter-spacing:-.015em;margin:0;text-wrap:balance;
+}
+h3{
+  font-family:Archivo,"Helvetica Neue",Arial,"PingFang TC",sans-serif;
+  font-weight:600;font-size:18px;margin:0;letter-spacing:-.005em;
+}
+p{margin:0;max-width:66ch}
+.body > p, .body > ul{color:var(--ink-2)}
+ul{margin:0;padding-left:1.2em;max-width:66ch;display:flex;flex-direction:column;gap:8px}
+li::marker{color:var(--muted)}
+strong{font-weight:600;color:var(--ink)}
+code{
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  font-size:.86em;background:var(--surface-2);border:1px solid var(--line-soft);
+  border-radius:3px;padding:1px 5px;color:var(--ink);
+}
+a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1px}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+
+/* ---------- pipeline ---------- */
+.pipe{
+  display:flex;flex-wrap:wrap;align-items:stretch;gap:10px;
+  background:var(--surface);border:1px solid var(--line);
+  padding:20px;border-radius:6px;overflow-x:auto;box-shadow:var(--shadow);
+}
+.stage{
+  flex:1 1 128px;min-width:128px;display:flex;flex-direction:column;gap:6px;
+  padding:12px 13px;background:var(--surface-2);border:1px solid var(--line-soft);
+  border-radius:4px;
+}
+.stage.split{background:var(--accent-soft);border-color:var(--accent)}
+.stage.gate{border-color:var(--crit)}
+.stage .k{
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+}
+.stage .v{
+  font-family:Archivo,Arial,"PingFang TC",sans-serif;font-weight:600;font-size:14.5px;
+  line-height:1.3;color:var(--ink);
+}
+.stage .n{font-size:12.5px;color:var(--muted);line-height:1.45;font-family:"Source Serif 4",Georgia,serif}
+.arrow{
+  align-self:center;color:var(--muted);font-family:"IBM Plex Mono",monospace;
+  font-size:15px;flex:0 0 auto;
+}
+
+/* ---------- tables ---------- */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{padding:10px 14px;text-align:left;border-bottom:1px solid var(--line-soft);white-space:nowrap}
+th{
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
+  font-weight:600;background:var(--surface-2);
+}
+tbody tr:last-child td{border-bottom:0}
+td.num{font-variant-numeric:tabular-nums;font-family:"IBM Plex Mono",Menlo,monospace}
+td.rule{font-family:"IBM Plex Mono",Menlo,monospace;font-size:12.5px;white-space:normal;min-width:20ch}
+
+.sev{
+  display:inline-flex;align-items:center;gap:6px;
+  font-family:"IBM Plex Mono",Menlo,monospace;font-size:11px;font-weight:600;
+  letter-spacing:.07em;
+}
+.sev::before{content:"";width:8px;height:8px;border-radius:2px;background:currentColor}
+.sev.c{color:var(--crit)} .sev.h{color:var(--high)} .sev.m{color:var(--med)}
+.sev.l{color:var(--low)} .sev.p{color:var(--pass)}
+
+/* ---------- answer block ---------- */
+.short{
+  background:var(--surface);border:1px solid var(--line);
+  border-left:3px solid var(--accent);
+  border-radius:0 5px 5px 0;padding:16px 20px;
+  display:flex;flex-direction:column;gap:6px;box-shadow:var(--shadow);
+}
+.short .k{
+  font-family:"IBM Plex Mono",Menlo,monospace;font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--accent);font-weight:600;
+}
+.short p{font-size:17px;color:var(--ink);max-width:62ch}
+
+.split2{display:grid;grid-template-columns:1fr;gap:14px}
+@media (min-width:700px){.split2{grid-template-columns:1fr 1fr}}
+.col{
+  background:var(--surface);border:1px solid var(--line);border-radius:5px;
+  padding:16px 18px;display:flex;flex-direction:column;gap:9px;
+}
+.col h3{font-size:16px}
+.col .tag{
+  font-family:"IBM Plex Mono",Menlo,monospace;font-size:11px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted);
+}
+.col p{font-size:15px;color:var(--ink-2);max-width:none}
+.col ul{font-size:15px;color:var(--ink-2);max-width:none;gap:6px}
+
+pre{
+  margin:0;background:var(--surface);border:1px solid var(--line);border-radius:5px;
+  padding:15px 17px;overflow-x:auto;
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:13px;line-height:1.65;
+  color:var(--ink);
+}
+pre .c{color:var(--muted)}
+pre .bad{color:var(--crit)}
+pre .good{color:var(--pass)}
+
+.caution{
+  background:var(--surface-2);border:1px dashed var(--line);border-radius:5px;
+  padding:14px 17px;font-size:15px;color:var(--ink-2);
+}
+.caution b{color:var(--ink)}
+
+footer{padding:44px 0 0;color:var(--muted);font-size:14px;display:flex;flex-direction:column;gap:12px}
+footer ul{max-width:none;gap:5px;font-size:13.5px}
+footer a{color:var(--accent)}
+
+@media (prefers-reduced-motion:no-preference){
+  .stage,.col,.short{transition:border-color .15s ease}
+}
+</style>
+<style>
+/* ---------- D2 追加元件 ---------- */
+.runs{display:flex;flex-direction:column;gap:0;border:1px solid var(--line);border-radius:6px;background:var(--surface);overflow:hidden}
+.run{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;padding:13px 16px;border-bottom:1px solid var(--line-soft);align-items:baseline}
+.run:last-child{border-bottom:0}
+.run .badge{
+  font-family:"IBM Plex Mono",Menlo,monospace;font-size:10.5px;font-weight:600;letter-spacing:.08em;
+  padding:3px 8px;border-radius:3px;white-space:nowrap;grid-row:span 2;align-self:center;
+}
+.run .badge.ok{color:var(--pass);border:1px solid currentColor}
+.run .badge.bad{color:var(--crit);border:1px solid currentColor}
+.run .what{font-family:Archivo,Arial,"PingFang TC",sans-serif;font-weight:600;font-size:15px;color:var(--ink)}
+.run .id{font-family:"IBM Plex Mono",Menlo,monospace;font-size:12px;color:var(--muted);word-break:break-all}
+.chain{display:flex;flex-direction:column;gap:0;counter-reset:layer}
+.layer{
+  display:grid;grid-template-columns:auto 1fr;gap:0 16px;padding:14px 0;
+  border-bottom:1px solid var(--line-soft);align-items:start;
+}
+.layer:last-child{border-bottom:0}
+.layer .n{
+  font-family:"IBM Plex Mono",Menlo,monospace;font-size:11px;letter-spacing:.1em;
+  color:var(--accent);font-weight:600;padding-top:3px;white-space:nowrap;
+}
+.layer .t{font-family:Archivo,Arial,"PingFang TC",sans-serif;font-weight:600;font-size:15.5px;color:var(--ink);margin-bottom:4px}
+.layer .d{font-size:15px;color:var(--ink-2)}
+.layer.weak .n{color:var(--crit)}
+.drill{
+  background:var(--surface);border:1px solid var(--crit);border-radius:5px;
+  padding:16px 18px;display:flex;flex-direction:column;gap:10px;
+}
+.drill .k{font-family:"IBM Plex Mono",Menlo,monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--crit);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">Day 2 · CI / Supply Chain</p>
+    <h1>sec-pr-gate CI 硬化</h1>
+    <p class="standfirst">把 D1 的本機掃描搬進 GitHub Actions，但不只是把 <code>make scan</code> 塞進 YAML —— 同時照官方 hardening 指南做進三道供應鏈防線，並且實際演練它們會不會擋。</p>
+    <dl class="meta">
+      <div><dt>日期</dt><dd>2026-09-05</dd></div>
+      <div><dt>Jobs</dt><dd>sast · sca · summary</dd></div>
+      <div><dt>Actions pinned</dt><dd>10 / 10</dd></div>
+      <div><dt>Code Scanning</dt><dd>Semgrep 9 · Trivy 21</dd></div>
+      <div><dt>演練</dt><dd><span class="sev c">checksum 擋下</span></dd></div>
+    </dl>
+  </header>
+
+  <section>
+    <div class="rail"><b>01</b>目標</div>
+    <div class="body">
+      <h2>看得見、可重現、可信任</h2>
+      <p>企業要的不是「有人在筆電上跑過掃描」，而是三件事同時成立：<strong>每個 PR 都自動被掃</strong>、<strong>結果出現在開發者已經在看的地方</strong>（PR 頁面 / Security tab）、而且 <strong>pipeline 本身不會變成攻擊面</strong>。</p>
+
+      <p>第三點在 2026 年特別具體。3 月 19 日，攻擊者用竊得的憑證覆寫了 <code>trivy-action</code> 77 個 tag 中的 76 個、以及 <code>setup-trivy</code> 的全部 7 個，並發佈植入惡意程式的 Trivy CLI v0.69.4。任何寫著 <code>uses: aquasecurity/trivy-action@0.28.0</code> 的 pipeline，在下一次 run 就把 CI secrets 送了出去 —— 被當成跳板的，正是一個安全掃描器。</p>
+
+      <div class="pipe">
+        <div class="stage"><span class="k">trigger</span><span class="v">PR → main</span><span class="n">push main 產生 baseline</span></div>
+        <span class="arrow">→</span>
+        <div class="stage split"><span class="k">job: sast</span><span class="v">Semgrep</span><span class="n">JSON + SARIF</span></div>
+        <div class="stage split"><span class="k">job: sca</span><span class="v">Trivy</span><span class="n">JSON + SARIF</span></div>
+        <span class="arrow">→</span>
+        <div class="stage"><span class="k">job: summary</span><span class="v">Job Summary</span><span class="n">兩份 JSON 合成表格</span></div>
+        <span class="arrow">→</span>
+        <div class="stage"><span class="k">呈現</span><span class="v">Code Scanning</span><span class="n">SARIF → PR alert</span></div>
+      </div>
+
+      <p><strong>今天刻意不擋 merge。</strong>掃描步驟只負責產生資料，決策要等 Day 4 的 agent 判完 TP/FP、Day 5 依 <code>policy.yml</code> 決定 exit code。這是 pipeline 設計原則：<em>產生資料</em>和<em>做決定</em>放在不同步驟，才能各自測試、各自改。</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>02</b>結果</div>
+    <div class="body">
+      <h2>四次 run，其中一次刻意失敗</h2>
+
+      <div class="runs">
+        <div class="run"><span class="badge ok">SUCCESS</span><span class="what">baseline（push main）</span><span class="id">actions/runs/33971312482</span></div>
+        <div class="run"><span class="badge ok">SUCCESS</span><span class="what">PR #1 <code>feat/debug-eval</code></span><span class="id">actions/runs/33972073313</span></div>
+        <div class="run"><span class="badge bad">FAILURE</span><span class="what">供應鏈演練 — checksum 改一個字元</span><span class="id">actions/runs/33972293976</span></div>
+        <div class="run"><span class="badge ok">SUCCESS</span><span class="what">供應鏈演練 — 還原</span><span class="id">actions/runs/33972819894</span></div>
+      </div>
+
+      <div class="drill">
+        <span class="k">演練證據</span>
+        <p style="max-width:none">把 <code>TRIVY_SHA256</code> 最後一個字元 <code>a</code> 改成 <code>b</code>，job 在 4 秒內死掉：</p>
+<pre><span class="bad">sha256sum: WARNING: 1 computed checksum did NOT match
+trivy.tgz: FAILED
+Error: Process completed with exit code 1.</span></pre>
+        <p style="max-width:none">關鍵不是「它失敗了」，而是 <strong>失敗發生在 <code>sudo install</code> 之前</strong> —— 被替換的 binary 從來沒有進到 PATH。3 月事件裡缺的就是這一道。</p>
+      </div>
+
+      <h3 style="margin-top:8px">兩組 baseline，不可混用</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th></th><th>本機 make scan</th><th>CI pr-security</th></tr></thead>
+          <tbody>
+            <tr><td>Semgrep ruleset</td><td class="rule">p/default p/secrets<br>p/owasp-top-ten</td><td class="rule">p/python p/flask<br>p/secrets</td></tr>
+            <tr><td>Semgrep raw findings</td><td class="num">13</td><td class="num">9</td></tr>
+            <tr><td>TP / FP</td><td class="num">11 / 2</td><td class="num">8 / 1</td></tr>
+            <tr><td>raw precision</td><td class="num">84.6%</td><td class="num">88.9%</td></tr>
+            <tr><td>真實漏洞點</td><td class="num">4</td><td class="num">4</td></tr>
+            <tr><td>Trivy 標的</td><td>app/</td><td>. （整個 repo）</td></tr>
+            <tr><td>Trivy vuln</td><td class="num">25</td><td class="num">37</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>三個發現值得記住。<strong>一、可重現性成立</strong>：<code>app/requirements.txt</code> 那 25 筆 CVE 在本機 docker 與 CI runner 上逐筆完全相同 —— 同一份 pinned lock 檔就是同一組結果。<strong>二、SARIF 是子集</strong>：Job Summary 有 38 筆，Code Scanning 只有 21 筆，因為 SARIF 只帶 HIGH/CRITICAL；Day 3 正規化要吃 JSON 不要吃 SARIF。<strong>三、severity 會騙人</strong>：3 個 CRITICAL 全部來自 <code>testdata/</code> 的測試 fixture，真正的 <code>app/</code> 一個 CRITICAL 都沒有。如果門檻只看等級，這個 gate 會為了 fixture 擋掉 PR。</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>Q1</b>信任鏈</div>
+    <div class="body">
+      <h2>為什麼不直接用 <code>aquasecurity/trivy-action</code>？</h2>
+
+      <div class="short">
+        <span class="k">短答</span>
+        <p><strong>因為 pin SHA 只鎖得住 action 的原始碼，鎖不住它執行時去下載的東西。</strong>trivy-action 本身就是 3 月被覆寫 tag 的受害者；即使我 pin 到 SHA，它內部仍會再去抓 Trivy binary，那一層我控制不到。</p>
+      </div>
+
+      <p>把信任鏈攤開看，用 action 和自己下載的差別在於「我到底在信任什麼」：</p>
+
+      <div class="chain">
+        <div class="layer weak">
+          <span class="n">用 action</span>
+          <div>
+            <div class="t">信任 = action 的原始碼 + 它執行時抓的任何東西</div>
+            <div class="d">pin SHA 之後，第一層鎖住了；第二層仍然是執行期才決定的網路請求。tag 被覆寫時，第一層也曾經整個失守。</div>
+          </div>
+        </div>
+        <div class="layer">
+          <span class="n">自己下載</span>
+          <div>
+            <div class="t">信任 = GitHub release 上的<em>這一份 bytes</em></div>
+            <div class="d"><code>curl</code> release tarball → <code>sha256sum -c</code> 比對寫死在 workflow 裡的值 → 才 <code>install</code>。中間沒有第三方程式碼參與決策。</div>
+          </div>
+        </div>
+      </div>
+
+      <p>「checksum 寫死在 workflow 裡」的意思是：<strong>我信任的是這個 bytes，不是這個檔名，也不是這個網址。</strong>升版時我必須人工去看新的 <code>checksums.txt</code>、把值換掉、送 PR —— <em>這個摩擦是刻意的</em>。自動升版的方便，換來的就是 3 月那種「下一次 run 悄悄變成別的東西」。</p>
+
+      <p>再往上一層還可以做：Trivy 的 release 另附 <code>.sigstore.json</code>，用 <code>cosign verify-blob</code> 可以把信任錨定到 Trivy 專案的 GitHub Actions OIDC identity —— 也就是從「這份 bytes 沒被改」推進到「這份 bytes 確實是 Trivy 的 CI 發出來的」。本週不做，但這是 checksum 之上的正確下一步。</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>Q2</b>權限</div>
+    <div class="body">
+      <h2><code>permissions: {}</code> 寫在 YAML，跟 repo settings 設 read-only 差在哪？</h2>
+
+      <div class="short">
+        <span class="k">短答</span>
+        <p><strong>兩者都要做，因為它們防的是不同的東西。</strong>repo/org 的 default 是保底，但 <em>workflow 檔可以覆寫它</em>；寫在 YAML 裡才會出現在 PR diff，也才能被靜態檢查。</p>
+      </div>
+
+      <div class="split2">
+        <div class="col">
+          <span class="tag">repo / org settings</span>
+          <h3>保底，但看不見</h3>
+          <ul>
+            <li>一次設定，涵蓋所有 workflow</li>
+            <li>但單一 workflow 的 <code>permissions:</code> 可以覆寫它</li>
+            <li>權限變更發生在設定頁，<strong>不會出現在 code review 裡</strong></li>
+          </ul>
+        </div>
+        <div class="col">
+          <span class="tag">workflow YAML</span>
+          <h3>可審、可測</h3>
+          <ul>
+            <li>reviewer 在 PR diff 就看得到權限變化</li>
+            <li>zizmor 這類工具能靜態檢查（<code>excessive-permissions</code>）</li>
+            <li>跟著 repo 走，fork / 搬遷都不會掉</li>
+          </ul>
+        </div>
+      </div>
+
+      <p>實際套用的原則是<strong>逐 job 最小權限</strong>：頂層 <code>permissions: {}</code> 把 <code>GITHUB_TOKEN</code> 整個關掉，然後每個 job 只開它真正需要的。</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Job</th><th>權限</th><th>為什麼需要</th></tr></thead>
+          <tbody>
+            <tr><td>sast</td><td class="rule">contents: read<br>security-events: write</td><td>checkout PR head；上傳 SARIF</td></tr>
+            <tr><td>sca</td><td class="rule">contents: read<br>security-events: write</td><td>同上</td></tr>
+            <tr><td>summary</td><td class="rule">contents: read</td><td>只 sparse-checkout <code>scripts/</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><strong>沒有任何一個 job 拿到 <code>contents: write</code>。</strong>Day 5 要寫 PR comment 時才會加 <code>pull-requests: write</code>，而且只加在那一個 job。另外所有 checkout 都設了 <code>persist-credentials: false</code>，避免 token 留在 <code>.git/config</code> 被後面的步驟讀走 —— 這一條在 D1 那個舊 workflow 沒設，zizmor 直接報 <code>artipacked</code>。</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>Q3</b>gate</div>
+    <div class="body">
+      <h2>SARIF 上傳之後，PR 上看到 alert 就等於 gate 了嗎？</h2>
+
+      <div class="short">
+        <span class="k">短答</span>
+        <p><strong>不是。Code Scanning 只是呈現層。</strong>要擋 merge 得用 branch protection / ruleset 把某個 check 設成 required；而且 Code Scanning 的 PR 檢查預設只對「新增且達門檻嚴重度」的 alert 亮紅。</p>
+      </div>
+
+      <p>這個 PR 剛好把兩者的差別演出來了。<code>pr-security</code> 的三個 job 全綠（我們今天不擋），但 GitHub 從 SARIF 產生的 <code>Semgrep OSS</code> check 是<strong>紅的</strong> —— 因為 PR 引入了新的 error-severity alert（<code>eval()</code> 那個 RCE）。紅歸紅，<strong>什麼都沒被擋住</strong>，因為沒有任何 branch protection 規則把它列為 required。</p>
+
+      <p>所以「PR 上有紅勾」和「PR 不能 merge」是兩件獨立的事。本專案把 gate 拆成四段，理由是<strong>讓判斷邏輯留在 repo 裡</strong>：</p>
+
+      <div class="chain">
+        <div class="layer"><span class="n">Day 2</span><div><div class="t">產生資料</div><div class="d">Semgrep + Trivy 各出 JSON 與 SARIF，掃描步驟一律 exit 0</div></div></div>
+        <div class="layer"><span class="n">Day 3</span><div><div class="t">算差集</div><div class="d">用 fingerprint 算出「PR 相對 main 新增的 findings」—— 今天靠肉眼比對，之後要變成程式</div></div></div>
+        <div class="layer"><span class="n">Day 4</span><div><div class="t">判 TP / FP</div><div class="d">agent 讀周圍程式碼與呼叫關係，判斷這個 finding 在這個上下文可不可利用</div></div></div>
+        <div class="layer"><span class="n">Day 5</span><div><div class="t">決定 exit code</div><div class="d">依 <code>policy.yml</code> 決定過或不過，再把這個 job 設為 required check</div></div></div>
+      </div>
+
+      <p>這樣 gate 的邏輯是<strong>可版控、可測試、code review 看得到</strong>的，而不是藏在 GitHub 的設定頁裡 —— 沒有人記得那頁上次是誰改的、為什麼改。設定頁只負責一件最單純的事：把 Day 5 那個 job 標成 required。</p>
+
+      <div class="caution"><b>Day 5 會遇到的衝突：</b>屆時 PR 上會有兩個東西同時表態 —— 我們自己的 policy gate，和 GitHub Code Scanning 的 check。兩者的判準不同（前者看 agent 判過的 TP、後者看 severity），所以必須決定誰說了算，或者把 Code Scanning 的觸發等級調開。這個問題今天就浮現了，早點看到反而省事。</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="rail"><b>03</b>檔案</div>
+    <div class="body">
+      <h2>D2 的產出</h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>檔案</th><th>作用</th></tr></thead>
+          <tbody>
+            <tr><td class="rule">.github/workflows/pr-security.yml</td><td>3 jobs，10 個 uses 全 pin 40 位 SHA</td></tr>
+            <tr><td class="rule">scripts/summary.py</td><td>兩份 JSON → Job Summary 的 Markdown 表格</td></tr>
+            <tr><td class="rule">scripts/lint.sh</td><td>actionlint + zizmor，掃 pipeline 自己</td></tr>
+            <tr><td class="rule">docs/day2-runbook.md</td><td>Step 4–6 執行手冊與驗收清單</td></tr>
+            <tr><td class="rule">notes.md</td><td>D2 段落：run URL、兩組 baseline、供應鏈防線</td></tr>
+          </tbody>
+        </table>
+      </div>
+<pre>make lint-ci      <span class="c"># actionlint + zizmor（工具在 image 裡，本機不用裝）</span>
+make version      <span class="c"># 六個工具版本</span>
+make scan         <span class="c"># 本機全掃 + 門檻判定</span></pre>
+      <p>舊的 <code>sec-pr-gate.yml</code> 已刪除 —— <code>make lint-ci</code> 抓出它 3 筆 <code>unpinned-uses</code> (high) 加 1 筆 <code>artipacked</code> (medium)，而且它的門檻會 exit 1，跟「今天不擋」直接衝突。功能由 <code>pr-security.yml</code> 加 Day 5 的 policy gate 接手。</p>
+    </div>
+  </section>
+
+  <footer>
+    <p>參考來源</p>
+    <ul>
+      <li><a href="https://github.com/aquasecurity/trivy/security/advisories/GHSA-69fq-xp46-6x23">Trivy ecosystem supply chain temporarily compromised — GHSA-69fq-xp46-6x23</a></li>
+      <li><a href="https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions">Security hardening for GitHub Actions — GitHub Docs</a></li>
+      <li><a href="https://docs.zizmor.sh/audits/">zizmor audits reference</a></li>
+    </ul>
+  </footer>
+
+</div>
+
+</body>
+</html>

@@ -144,3 +144,88 @@ requests ×3（CVE-2024-35195、CVE-2024-47081、CVE-2026-25645）、urllib3 ×2
 | 跨工具重複（secret） | 1 組（Semgrep line 15 = Trivy stripe-secret-token） |
 | Trivy CVE | 25（HIGH 7 / MEDIUM 16 / LOW 2） |
 | Trivy secret | 1 CRITICAL |
+
+---
+
+# D2 — GitHub Actions PR gate（2026-09-05）
+
+## Run URLs
+
+| 用途 | 結果 | URL |
+|---|---|---|
+| baseline（push main） | success | https://github.com/TungChiaMing/sec-pr-gate/actions/runs/33971312482 |
+| PR #1 `feat/debug-eval` | success | https://github.com/TungChiaMing/sec-pr-gate/actions/runs/33972073313 |
+| 供應鏈演練 — checksum 壞 | **failure（預期）** | https://github.com/TungChiaMing/sec-pr-gate/actions/runs/33972293976/job/101322826771 |
+| 供應鏈演練 — checksum 還原 | success | https://github.com/TungChiaMing/sec-pr-gate/actions/runs/33972819894 |
+
+## Code Scanning alert 數
+
+| Tool | Alerts |
+|---|---|
+| Semgrep OSS | 9 |
+| Trivy | 21 |
+
+⚠️ **SARIF 是子集，JSON 才是完整資料。** Trivy 的 Job Summary 是 37 vuln + 1 secret，但 Code Scanning 只有 21 —— SARIF 只帶 HIGH/CRITICAL 以上，MEDIUM/LOW 沒進 alert。Day 3 正規化要吃 JSON，不要吃 SARIF。
+
+## 兩組 baseline，不可混用
+
+| | 本機 `make scan` | CI `pr-security.yml` |
+|---|---|---|
+| Semgrep ruleset | `p/default p/secrets p/owasp-top-ten` | `p/python p/flask p/secrets` |
+| Semgrep raw findings | 13 | 9 |
+| TP / FP | 11 / 2 | 8 / 1 |
+| raw precision | 84.6% | 88.9% |
+| 真實漏洞點 | 4 | 4 |
+| Trivy 標的 | `app/` | `.`（整個 repo） |
+| Trivy vuln | 25 | 37 |
+
+CI 少掉的 4 筆 Semgrep：`formatted-sql-query`、`sqlalchemy-execute-raw-query`、django 版 `tainted-sql-string`（都是 line 31 的重複告警），以及 **line 55 的 `insecure-deserialization`** —— `p/python p/flask p/secrets` 沒收錄那條，所以 CI baseline 只剩 md5 一個 FP。
+
+**Day 6 算 precision / recall 時必須標明是哪一組 baseline。**
+
+## 可重現性證明
+
+`app/requirements.txt` 的 25 筆 CVE（HIGH 7 / MEDIUM 16 / LOW 2）在本機 docker 與 CI runner 上**逐筆完全相同**。同一份 pinned lock 檔 → 同一組結果，這就是 SCA 可重現的意義。
+
+## PR #1 新增的 rule id（差集）
+
+```
+python.django.security.injection.code.user-eval.user-eval
+python.flask.security.injection.user-eval.eval-injection
+```
+
+其餘 9 條與 main 完全相同，差集剛好 2 筆、都是 eval 相關。
+
+⚠️ **rule id 會隨版本漂移，不能當穩定 key。** 教材寫的是 `python.flask.security.injection.eval-injection` 與 `python.lang.security.audit.eval-detected`；實際上 flask 那條路徑多了 `.user-eval` 一層，`eval-detected` 根本沒出現、換成 django 版的 `user-eval`。Day 3 正規化的識別鍵要用 `(file, line, CWE/類別)`，rule id 只當附註。
+
+## 三個要帶進 Day 3–5 的觀察
+
+1. **CRITICAL 全在 `testdata/`，`app/` 一個都沒有。** PyYAML 5.1 的 3 個 CRITICAL 來自測試 fixture。如果 gate 用 `FAIL_ON_TRIVY=CRITICAL`，會為了 fixture 擋掉 PR。→ **policy 必須帶路徑維度**，不能只看 severity。`testdata/` 刻意保留不排除，就是要練這個 case。
+2. **Code Scanning 自己也會擋。** PR 上除了我們的三個 job，還有 GitHub 從 SARIF 產生的 `Semgrep OSS` / `Trivy` check。`Semgrep OSS` 是**紅的** —— 因為 PR 引入新的 error-severity alert（`eval()` RCE）。所以「今天不擋」只對自己的 pipeline 成立。Day 5 寫 policy gate 時要決定：**自己的 gate 和 Code Scanning 的 check 誰說了算**（Settings → Code security → protection rules 可調觸發等級）。
+3. **跨工具重複**：Semgrep `app.py:15` 的 stripe key 與 Trivy 的 `stripe-secret-token` 是同一個漏洞。去重要跨工具做。
+
+## 供應鏈防線（面試講這段）
+
+| 防線 | 做法 | 證據 |
+|---|---|---|
+| Action 不可變 | 6 個 action 全 pin 40 位 commit SHA，版本號降級成註解 | `docs/day2-runbook.md` 有查證過的 SHA 清單 |
+| Token 最小權限 | 頂層 `permissions: {}` deny-by-default，逐 job 只開 `contents: read` + `security-events: write` | zizmor 無 findings |
+| Token 不落地 | 所有 checkout `persist-credentials: false` | 舊 workflow 沒設，zizmor 報 `artipacked` |
+| 第三方 binary | 不用 `trivy-action`，自行下載 release tarball + `sha256sum -c`，checksum 寫死在 workflow | **實測：改一個字元 → job 在 `sudo install` 之前就 fail** |
+| Pipeline 自我掃描 | actionlint + zizmor 打包進 image，`make lint-ci` | 舊 `sec-pr-gate.yml` 被抓出 3 high + 1 medium，已刪除 |
+
+演練的失敗 log（`runs/33972293976`）：
+
+```
+sha256sum: WARNING: 1 computed checksum did NOT match
+trivy.tgz: FAILED
+Error: Process completed with exit code 1.
+```
+
+關鍵是**失敗發生在 `sudo install` 之前** —— 被替換的 binary 從來沒有被安裝到 PATH 上。2026-03 的 Trivy 事件裡，寫 `uses: aquasecurity/trivy-action@0.28.0` 的 pipeline 就是少了這一道。
+
+## 今天刻意沒做
+
+- 不擋 merge（Day 5 的 `policy.yml`）
+- 不做 TP/FP 判斷（Day 4 的 agent）
+- 不用 cosign 驗 Trivy 的 `.sigstore.json`（checksum 只證明 bytes 沒被改，簽章才證明是誰發的）

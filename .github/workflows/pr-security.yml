@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]      # baseline scan of main (used by Day 3 diff)
+    branches: [main]      # baseline scan of main
   workflow_dispatch:
 
 # Deny-by-default: the workflow itself gets nothing; each job asks for what it needs.
@@ -16,18 +16,23 @@ concurrency:
 
 env:
   TRIVY_VERSION: "0.74.0"
-  # sha256 of trivy_0.74.0_Linux-64bit.tar.gz, taken from trivy_0.74.0_checksums.txt (2026-09-05)
+  # sha256 of trivy_0.74.0_Linux-64bit.tar.gz, from trivy_0.74.0_checksums.txt (verified 2026-09-06)
   TRIVY_SHA256: "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
   SEMGREP_VERSION: "1.176.1"
+  # Language-agnostic rulesets (Day 5 turns this into a workflow_call input)
+  SEMGREP_RULESETS: "--config p/default --config p/secrets --config p/owasp-top-ten"
+  TRIVY_SCANNERS: "vuln,secret,misconfig"
+  # Base commit for the PR diff; empty on push/workflow_dispatch -> no baseline, everything is "new"
+  BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
 
 jobs:
   sast:
     name: SAST (Semgrep)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
-      contents: read           # checkout the PR head
-      security-events: write   # upload SARIF to Code Scanning
+      contents: read           # checkout
+      security-events: write   # upload-sarif -> Code Scanning
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -40,16 +45,37 @@ jobs:
       - name: Install Semgrep (pinned)
         run: pip install --disable-pip-version-check "semgrep==${SEMGREP_VERSION}"
 
-      - name: Semgrep scan (JSON + SARIF)
+      - name: Semgrep scan of PR head (whole repo, JSON + SARIF)
         run: |
           mkdir -p out
-          semgrep scan \
-            --config p/python --config p/flask --config p/secrets \
+          # shellcheck disable=SC2086  # SEMGREP_RULESETS is intentionally word-split
+          semgrep scan ${SEMGREP_RULESETS} \
             --metrics=off \
+            --exclude out --exclude base \
             --json-output out/semgrep.json \
             --sarif-output out/semgrep.sarif \
-            app/
-          echo "semgrep findings: $(jq '.results | length' out/semgrep.json)"
+            .
+          echo "semgrep head findings: $(jq '.results | length' out/semgrep.json)"
+
+      - name: Checkout base commit into ./base (PR only)
+        if: env.BASE_SHA != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: base
+          persist-credentials: false
+
+      - name: Semgrep scan of base commit (PR only)
+        if: env.BASE_SHA != ''
+        working-directory: base
+        run: |
+          # shellcheck disable=SC2086
+          semgrep scan ${SEMGREP_RULESETS} \
+            --metrics=off \
+            --exclude out --exclude base \
+            --json-output ../out/semgrep.base.json \
+            .
+          echo "semgrep base findings: $(jq '.results | length' ../out/semgrep.base.json)"
 
       - name: Upload SARIF to Code Scanning
         uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
@@ -60,17 +86,17 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: semgrep-results
-          path: out/semgrep.*
+          path: out/semgrep*
           if-no-files-found: error
           retention-days: 14
 
   sca:
-    name: SCA + Secrets (Trivy)
+    name: SCA + Secrets + Misconfig (Trivy)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
-      contents: read           # checkout the PR head
-      security-events: write   # upload SARIF to Code Scanning
+      contents: read           # checkout
+      security-events: write   # upload-sarif -> Code Scanning
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -84,6 +110,7 @@ jobs:
           echo "${TRIVY_SHA256}  trivy.tgz" | sha256sum -c -
           tar -xzf trivy.tgz trivy
           sudo install -m 0755 trivy /usr/local/bin/trivy
+          rm -f trivy trivy.tgz
           trivy --version
 
       - name: Cache Trivy DB
@@ -93,12 +120,29 @@ jobs:
           key: trivy-db-${{ runner.os }}-${{ github.run_id }}
           restore-keys: trivy-db-${{ runner.os }}-
 
-      - name: Trivy fs scan (JSON + SARIF)
+      - name: Trivy scan of PR head (JSON + SARIF)
         run: |
           mkdir -p out
-          trivy fs --scanners vuln,secret --format json  -o out/trivy.json  --no-progress .
-          trivy fs --scanners vuln,secret --format sarif -o out/trivy.sarif --no-progress --skip-db-update .
-          echo "trivy findings: $(jq '[.Results[]? | (.Vulnerabilities // [] | length) + (.Secrets // [] | length)] | add // 0' out/trivy.json)"
+          trivy fs --scanners "${TRIVY_SCANNERS}" --skip-dirs out --skip-dirs base \
+            --format json  -o out/trivy.json  --no-progress .
+          trivy fs --scanners "${TRIVY_SCANNERS}" --skip-dirs out --skip-dirs base \
+            --format sarif -o out/trivy.sarif --no-progress --skip-db-update --skip-check-update .
+          echo "trivy head findings: $(jq '[.Results[]? | (.Vulnerabilities // [] | length) + (.Secrets // [] | length) + (.Misconfigurations // [] | length)] | add // 0' out/trivy.json)"
+
+      - name: Checkout base commit into ./base (PR only)
+        if: env.BASE_SHA != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: base
+          persist-credentials: false
+
+      - name: Trivy scan of base commit (PR only)
+        if: env.BASE_SHA != ''
+        working-directory: base
+        run: |
+          trivy fs --scanners "${TRIVY_SCANNERS}" --skip-dirs out --skip-dirs base \
+            --format json -o ../out/trivy.base.json --no-progress --skip-db-update --skip-check-update .
 
       - name: Upload SARIF to Code Scanning
         uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
@@ -109,25 +153,50 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: trivy-results
-          path: out/trivy.*
+          path: out/trivy*
           if-no-files-found: error
           retention-days: 14
 
   summary:
-    name: Job Summary
+    name: Normalize + Diff + Job Summary
     needs: [sast, sca]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: read           # sparse-checkout scripts/ only
+      contents: read           # sparse checkout of scripts/
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: scripts
+
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: out
           merge-multiple: true
-      - name: Write summary
+
+      - name: Raw scan summary (Day 2)
         run: python3 scripts/summary.py out/semgrep.json out/trivy.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Normalize + fingerprint + baseline diff (Day 3)
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/findings.py ingest --run head --sha "${HEAD_SHA}" out/semgrep.json out/trivy.json
+          if [ -n "${BASE_SHA}" ]; then
+            python3 scripts/findings.py ingest --run base --sha "${BASE_SHA}" out/semgrep.base.json out/trivy.base.json
+            python3 scripts/findings.py new --base base --head head --json out/new.json --md >> "$GITHUB_STEP_SUMMARY"
+          else
+            python3 scripts/findings.py new --head head --json out/new.json --md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "new findings: $(jq '.counts.new' out/new.json)"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: findings
+          path: |
+            out/findings.db
+            out/new.json
+          if-no-files-found: error
+          retention-days: 14

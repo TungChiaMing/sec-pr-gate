@@ -13,12 +13,17 @@ case "$cmd" in
   pr-gate)  exec /usr/local/bin/pr-gate.sh "$@" ;;
   count)    exec python3 /usr/local/bin/count.py "$@" ;;
   lint)     exec /usr/local/bin/lint.sh "$@" ;;
+  lock)     exec /usr/local/bin/lock.sh "$@" ;;
+  baseline) exec /usr/local/bin/baseline.sh "$@" ;;
+  diff)     exec /usr/local/bin/diff.sh "$@" ;;
+  findings) exec python3 /usr/local/bin/findings.py "$@" ;;
   version)
     echo "semgrep : $(semgrep --version 2>/dev/null)"
     echo "trivy   : $(trivy --version 2>/dev/null | head -1)"
     echo "gh      : $(gh --version 2>/dev/null | head -1)"
     echo "actionlint: $(actionlint --version 2>/dev/null | head -1)"
     echo "zizmor  : $(zizmor --version 2>/dev/null | head -1)"
+    echo "node    : $(node --version 2>/dev/null)"
     echo "python  : $(python --version 2>&1)"
     ;;
   sh|bash)  exec bash "$@" ;;
