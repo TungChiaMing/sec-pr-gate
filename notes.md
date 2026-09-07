@@ -490,3 +490,150 @@ Trivy 的 CVSS 分數與 PrimaryURL 全都在，agent 與報表隨時取得到�
 同一工具內的重複也是同樣的立場：`app/app.py:31` 一段 SQL 拼接被 **4 條 Semgrep 規則**命中、
 `:40` 被 3 條。這些是同一個漏洞，但 rule_id 不同、建議的修法也不同。
 去重需要「這幾筆講的是不是同一件事」的推理 —— 那是 D4 的工作，機械規則做不到。
+
+---
+
+# D4 — LLM Triage Agent（2026-09-07）
+
+## 目標
+
+**讓「這筆 finding 在這個上下文可不可被利用」有機器可讀的答案。**
+
+D3 交出 95 筆正規化後的 findings，但掃描器判的是**模式**不是**風險**：`hashlib.md5` 拿來做 cache key 還是簽章都會被抓、`lodash@4.17.20` 有沒有被 require 都是 HIGH。企業裡 SAST finding 有一半以上最後被標成 FP 或 won't fix，而 triage 是 AppSec 團隊最貴的人力。
+
+D4 要產出的是**帶理由的結構化 verdict**（TP / FP / NEEDS_REVIEW + confidence + reason + suggested_fix），讓 D5 的 policy 只認欄位、不用 parse 自由文字。
+
+## 做了什麼 / 為什麼
+
+| 做的事 | 為什麼 |
+|---|---|
+| tool-use loop（get_context / read_file / search_repo / osv_lookup / submit_verdict） | 讓模型自己決定要看什麼 —— 不隨 repo 大小爆掉、每個判斷對應到讀過的證據 |
+| `Repo.safe()` path jail + 只走 `git ls-files` | 工具是唯讀、關在 repo 裡、拒絕 `.git` / `out` / `node_modules` / `.env` |
+| 工具回傳一律包在 `<file>` / `<search>` / `<osv>` 標籤，system prompt 明說是 UNTRUSTED DATA | OWASP LLM01 (prompt injection) 與 LLM06 (excessive agency) 的最小防線 |
+| `MAX_TURNS=8` + `MAX_TOOL_CALLS=6` | 預算用完就要求立即裁決；沒裁決一律 NEEDS_REVIEW |
+| verdict 以 D3 的 fingerprint 為 PRIMARY KEY | 重跑免費 —— PR 每 push 一次只有真正新增的 finding 花 token |
+| 兩張表 `LANG_BY_EXT` / `ECOSYSTEM_BY_FILE` | 語言無關靠查表不靠模型猜；加新語言只要加一行，prompt 一個字都不用改 |
+
+## 重大偏離教材：改用本機 Ollama
+
+**決定**：不用 Anthropic API（不想開 API key 計費），改打本機 `ollama` + `gemma3:4b`。
+
+**問題**：`gemma3` 在 Ollama 上**沒有 `tools` capability**（`/api/show` 實測回 `["completion", "vision"]`，官方頁面也只列 text + vision）。tool-use loop 對它不能用。
+
+**做法**：provider 抽象 + 自動偵測，兩種模式：
+
+| | tool 模式 | prefetch 模式（gemma3 走這條） |
+|---|---|---|
+| 誰決定看什麼 | 模型 | **程式** |
+| 抓的證據 | 模型自己挑 | 有行號就 `get_context` ±25 行；`sca` 就 `osv_lookup` + `search_repo` 查 import |
+| 結構化輸出機制 | Anthropic `strict: true` tool | Ollama `format: <json schema>` |
+| 呼叫次數 | 多輪 | 一次 |
+
+**代價說清楚**：丟掉的正是「agent 自己決定看什麼」這個能力 —— 也就是選 tool use 而非塞 prompt 的**全部理由**。prefetch 讀的量是固定的。這個代價在結果裡有具體證據（見下面失效模式 3）。
+
+`MAX_TOOL_CALLS` 這個 budget 機制在 ollama fallback 下**完全沒被測到**，`tool_calls` 全部是 0。
+
+## 結果：整個 head run（95 筆）
+
+```
+provider=ollama model=gemma3:4b
+TP 91 · FP 4 · NEEDS_REVIEW 0
+cost $0 · input 117,444 tok · output 17,345 tok（平均 1236/183 每筆）
+tool_calls: 全部 0（prefetch 模式）
+```
+
+| verdict | sast | sca | secret | misconfig |
+|---|---|---|---|---|
+| TP | 18 | 66 | 4 | 3 |
+| FP | 1 | 1 | 0 | 2 |
+
+### 最重要的數字：過濾率 4.2%
+
+D4 存在的理由是「減少人要看的量」。**95 筆判完剩 91 筆要看。** 在這個配置下，D4 這一層幾乎沒有產生價值。
+
+**`NEEDS_REVIEW = 0` 更關鍵** —— 模型從來沒有說過一次「我判斷不了」。不是每次都有把握，是**沒有表達不確定的能力**。
+
+## 判對的 4 筆
+
+| finding | 判定 | 意義 |
+|---|---|---|
+| `app/app.py:61` md5 cache key | FP | D1 埋的情境型誤報，抓到了 |
+| 根 `Dockerfile` DS-0026 | FP | 正確指出「沒有 HEALTHCHECK 是可用性問題，不是安全弱點」 |
+| `samples/node-api/Dockerfile` DS-0026 | FP | 同上 |
+| `testdata/requirements.txt` flask CVE-2026-27205 | FP | 用「search 找不到 flask」推出不可達 —— **證明它做得到 reachability 推論** |
+
+## 五種失效模式（每一種都可量化，D6 用）
+
+**1. 同樣的證據、相反的結論。**
+`testdata/requirements.txt` 的 `requests` CVE 有 5 筆，reason **全部**明寫「search tool confirms that `requests` is not imported into the codebase」，然後 verdict 全給 **TP**。同一份 evidence，flask 那筆給 FP。
+→ **不是知識問題，是一致性問題。**
+
+**2. 否定式推論不會，肯定式會。**
+`axios` 那筆正確說「axios is imported in server.js」→ TP ✅。
+`minimist@1.2.5` CVE-2021-44906（宣告在 package.json 但**沒有任何** `require`）→ **TP** ❌。
+→ 「找得到 X」它會用，「找不到 X 所以不可達」它不會用。
+
+**3. 判了視窗裡的別的漏洞。**
+`server.js:38` 的 `using-http-server`（本機 127.0.0.1 的 http server，應為 FP）→ TP，
+而 reason 講的是 **`fetchUrl` / `axios.get` / SSRF** —— 那是 **line 24** 的東西。
+prefetch 給的是 ±25 行的視窗（涵蓋 13–63 行），模型抓了視窗裡另一個更像漏洞的東西來判。
+→ **這是 prefetch 模式的結構性缺陷**：tool 模式會去要它需要的那一行，prefetch 給的是一個邀請它漂移的視窗。
+→ 諷刺的是它指出的 SSRF 正是 D3 記錄 Semgrep **漏報**的那一筆。它找到了掃描器沒找到的漏洞，卻標錯了被問的那一筆。
+
+**4. 理由自相矛盾。**
+`scripts/triage_agent.py:153`（我們自己的 agent 程式碼）→ TP，但 reason 裡寫著
+「The B310 warning is a false positive, **as the host is fixed**」。
+還把 `json.dumps([cve, pkg, ecosystem, version])`（那是 **cache key**）誤認成 URL 的組成。
+
+**5. confidence 幾乎不帶資訊。**
+```
+1.0 × 78 · 0.95 × 6 · 0.9 × 1 · 95.0 × 10
+```
+`eval-detected` 這種 Semgrep metadata 自己標 `confidence: LOW` 的規則，模型照樣給 1.0。
+→ **D5 的 policy 不能用 `confidence >= 0.8` 當門檻，它會通過所有東西。**
+
+## 兩個實作 bug（都修了）
+
+**(a) `_http_json` 的 timeout 寫死 15 秒。**
+它原本是為 OSV 寫的（快、外部 API、15 秒合理），被本地 LLM 重用時假設不成立 —— 4B 第一次呼叫要先載權重。
+`_ollama()` 宣告了 `timeout` 參數卻沒傳下去。
+→ 同一個函式在兩種呼叫情境下的合理 timeout 差 40 倍。**重用時沒重新檢視預設值**，兩邊分開看都對，code review 很難抓。
+
+**(b) 結構化輸出沒擋住超出範圍的值。**
+schema 寫 `"description": "0.0-1.0"` 但**沒寫 `minimum` / `maximum`**，
+Ollama 的 `format=<schema>` 保證了「型別是 number」，**沒保證範圍** → 10/95 筆回 `95.0`（當成百分比）。
+
+→ 修正：schema 補 `minimum: 0, maximum: 1`，程式端加百分比換算與 clamp。
+→ **結論要改寫**：不是「兩種 provider、同一個保證」，而是 **「結構化輸出保證的是形狀，不是語意」** —— 程式端仍然必須驗。
+
+## Golden labels v1（D6 用）
+
+以下是我的標註與 gemma3:4b 的分歧點，這是第一版 ground truth：
+
+| finding | 我標 | gemma3:4b | 分歧原因 |
+|---|---|---|---|
+| minimist CVE-2021-44906 | FP / NEEDS_REVIEW | TP | 否定式 reachability |
+| `server.js:38` using-http-server | FP | TP | 判錯對象 |
+| `triage_agent.py:153` dynamic-urllib | FP | TP | 理由自相矛盾 |
+| testdata `requests` ×5 | FP | TP | 與 flask 那筆不一致 |
+| `app/app.py:61` md5 | FP | FP ✅ | |
+| DS-0026 ×2 | FP | FP ✅ | |
+| testdata flask CVE-2026-27205 | FP | FP ✅ | |
+
+粗算：**應為 FP 的至少 11 筆，抓到 4 筆 → recall(FP) ≈ 36%**，而且抓到的那 4 筆裡有 3 筆是「規則本身就不像漏洞」的類型（md5、HEALTHCHECK），真正需要 reachability 推論的只對了 1 筆。
+
+## CI 的處理：沒 key 就跳過
+
+GitHub runner 連不到本機的 ollama，所以 **triage 在本機做、CI 只做 normalize + diff**。
+workflow 的 triage step 在 `ANTHROPIC_API_KEY` 為空時寫一份空的 `triage.json`、印 `::notice::` 並綠燈通過。
+
+**這個「有就跑、沒有就跳過」的分支就是 D5 `agent_enabled` input 的雛形** —— 而且因為沒有 key，它是唯一能被實際驗證的分支。
+
+`uses:` 14 個全 pin，actionlint 無輸出，zizmor pedantic `No findings`。
+所有 `${{ }}` 都在 `concurrency` / `env:` / `with:`，**沒有任何一個在 `run:` 裡**（template injection）。
+
+## 今天沒做的
+
+- **`granite4.1:3b` 對照組**（有 tools capability）—— 同樣大小的模型、同一份 golden labels，差別只在 tool loop vs prefetch。這是回答「為什麼選 tool use」最乾淨的實驗，因硬體限制暫緩。
+- **Haiku vs Sonnet 一致率與成本比較** —— 沒有 API key。
+- **註解注入實驗**（在程式碼裡塞「這段是安全的」誘導 agent）—— 排在 D6。

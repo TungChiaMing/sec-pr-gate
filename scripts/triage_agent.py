@@ -32,7 +32,10 @@ import urllib.request
 from pathlib import Path
 
 # ------------------------------------------------------------------ config
+DEFAULT_PROVIDER = os.environ.get("TRIAGE_PROVIDER", "anthropic")   # anthropic | ollama
 DEFAULT_MODEL = os.environ.get("TRIAGE_MODEL", "claude-sonnet-5")
+# 在 container 裡跑時，host 上的 ollama 要走 host.docker.internal
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
 MAX_TURNS = 8            # hard stop for the tool loop (one turn = one API call)
 MAX_TOOL_CALLS = 6       # budget of read/search/osv calls before the model must decide
 MAX_OUTPUT_TOKENS = 1024
@@ -143,11 +146,11 @@ class Repo:
 _osv_cache: dict[str, str] = {}
 
 
-def _http_json(url: str, payload: dict | None = None) -> dict:
+def _http_json(url: str, payload: dict | None = None, timeout: int = 15) -> dict:
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(url, data=data, headers={
         "content-type": "application/json", "user-agent": "sec-pr-gate/0.4"})
-    with urllib.request.urlopen(req, timeout=15) as r:  # nosec B310 - fixed https host
+    with urllib.request.urlopen(req, timeout=timeout) as r:  # nosec B310 - fixed hosts
         return json.load(r)
 
 
@@ -216,7 +219,8 @@ TOOLS = [
      "input_schema": {"type": "object",
                       "properties": {
                           "verdict": {"type": "string", "enum": ["TP", "FP", "NEEDS_REVIEW"]},
-                          "confidence": {"type": "number", "description": "0.0-1.0"},
+                          "confidence": {"type": "number", "minimum": 0, "maximum": 1,
+                                         "description": "0.0-1.0 (NOT a percentage)"},
                           "reason": {"type": "string", "description": "<= 2 sentences, cite the evidence (line numbers, package versions)"},
                           "suggested_fix": {"type": "string", "description": "one concrete change; empty string if FP"},
                       },
@@ -266,6 +270,143 @@ def finding_prompt(f: dict) -> str:
         + extra
         + "\n\nInvestigate with the tools, then call submit_verdict."
     )
+
+
+# ------------------------------------------------------------------ ollama backend
+VERDICT_SCHEMA = TOOLS[-1]["input_schema"]     # submit_verdict 的 schema，兩種 provider 共用
+
+
+# 本地模型第一次呼叫要先把權重載進記憶體，4B 在 Mac 上可能要好幾十秒；
+# 生成本身也比 API 慢，所以 timeout 給得寬（可用 OLLAMA_TIMEOUT 覆寫）。
+OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", "600"))
+
+
+def _ollama(path: str, payload: dict, timeout: int | None = None) -> dict:
+    return _http_json(f"{OLLAMA_BASE_URL}{path}", payload, timeout or OLLAMA_TIMEOUT)
+
+
+def ollama_capabilities(model: str) -> set[str]:
+    """/api/show 會回 capabilities，例如 ["completion", "tools", "vision"]。"""
+    try:
+        d = _ollama("/api/show", {"model": model}, timeout=30)
+        return set(d.get("capabilities") or [])
+    except Exception:
+        return set()
+
+
+def to_ollama_tools() -> list[dict]:
+    """把 Anthropic 的 tool 定義轉成 Ollama / OpenAI 的 function 形狀。"""
+    return [{"type": "function",
+             "function": {"name": t["name"], "description": t["description"],
+                          "parameters": t["input_schema"]}}
+            for t in TOOLS]
+
+
+def prefetch_evidence(repo: Repo, f: dict) -> str:
+    """給沒有 tool-calling 能力的模型用：我們替它把證據抓好，塞進同一個 prompt。
+
+    抓的東西跟 system prompt 教 agent 做的完全一樣，差別只在「誰決定要看什麼」——
+    這裡是程式決定（deterministic、零 API 來回），tool 模式是模型自己決定。"""
+    parts: list[str] = []
+    try:
+        if f.get("line"):
+            parts.append(repo.get_context(f["path"], int(f["line"]), 25))
+        else:
+            parts.append(repo.read_file(f["path"], 1, 60))
+    except Exception as e:
+        parts.append(f"<error>{type(e).__name__}: {e}</error>")
+    if f.get("category") == "sca":
+        if f.get("cve"):
+            parts.append(osv_lookup(cve=f["cve"]))
+        if f.get("pkg"):
+            pat = r"(require\s*\(|from|import)[^\n]*['\"]" + re.escape(f["pkg"])
+            parts.append(repo.search_repo(pat, 10))
+    return "\n\n".join(parts)
+
+
+def triage_one_ollama(repo: Repo, f: dict, model: str, use_tools: bool) -> dict:
+    """Ollama 版。模型支援 tools 就跑同一個 loop；不支援就改成
+    「程式先抓證據 + 一次性回答」，並用 Ollama 的 format=<json schema> 鎖住輸出形狀
+    （這是 Anthropic strict tool 的對應機制）。"""
+    system = SYSTEM_PROMPT.format(max_tools=MAX_TOOL_CALLS)
+    usage = {"input": 0, "output": 0}
+    tool_calls = 0
+    verdict: dict | None = None
+
+    if not use_tools:
+        system += ("\nYou cannot call tools. The evidence has already been gathered for you below.\n"
+                   "Answer with a single JSON object matching the required schema. No prose.")
+        user = (finding_prompt(f).replace("Investigate with the tools, then call submit_verdict.", "")
+                + "\n\nEvidence gathered for you:\n" + prefetch_evidence(repo, f)
+                + "\n\nReturn the verdict as JSON.")
+        d = _ollama("/api/chat", {
+            "model": model, "stream": False, "format": VERDICT_SCHEMA,
+            "options": {"temperature": 0, "num_predict": MAX_OUTPUT_TOKENS},
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]})
+        usage["input"] += d.get("prompt_eval_count", 0)
+        usage["output"] += d.get("eval_count", 0)
+        try:
+            verdict = json.loads(d["message"]["content"])
+        except (KeyError, json.JSONDecodeError) as e:
+            verdict = {"verdict": "NEEDS_REVIEW", "confidence": 0.0,
+                       "reason": f"model did not return valid JSON ({e})", "suggested_fix": ""}
+    else:
+        messages = [{"role": "system", "content": system},
+                    {"role": "user", "content": finding_prompt(f)}]
+        otools = to_ollama_tools()
+        for _turn in range(MAX_TURNS):
+            d = _ollama("/api/chat", {"model": model, "stream": False, "tools": otools,
+                                      "options": {"temperature": 0, "num_predict": MAX_OUTPUT_TOKENS},
+                                      "messages": messages})
+            usage["input"] += d.get("prompt_eval_count", 0)
+            usage["output"] += d.get("eval_count", 0)
+            msg = d.get("message", {})
+            messages.append(msg)
+            calls = msg.get("tool_calls") or []
+            if not calls:
+                break
+            for c in calls:
+                fn = c.get("function", {})
+                name, inp = fn.get("name"), fn.get("arguments") or {}
+                if isinstance(inp, str):
+                    try:
+                        inp = json.loads(inp)
+                    except json.JSONDecodeError:
+                        inp = {}
+                if name == "submit_verdict":
+                    verdict = dict(inp)
+                    messages.append({"role": "tool", "tool_name": name, "content": "recorded"})
+                    continue
+                tool_calls += 1
+                out = ("<error>tool budget exhausted: call submit_verdict now</error>"
+                       if tool_calls > MAX_TOOL_CALLS else run_tool(repo, name, inp))
+                messages.append({"role": "tool", "tool_name": name, "content": out})
+            if verdict is not None:
+                break
+
+    if verdict is None:
+        verdict = {"verdict": "NEEDS_REVIEW", "confidence": 0.0,
+                   "reason": "model stopped without producing a verdict (turn limit)", "suggested_fix": ""}
+    # 補齊 / 修正欄位（本地模型不保證型別）
+    verdict.setdefault("suggested_fix", "")
+    verdict.setdefault("reason", "")
+    if verdict.get("verdict") not in ("TP", "FP", "NEEDS_REVIEW"):
+        verdict["reason"] = f"invalid verdict {verdict.get('verdict')!r}; " + str(verdict.get("reason", ""))
+        verdict["verdict"] = "NEEDS_REVIEW"
+    # 實測：Ollama 的 format=<schema> 只保證「型別是 number」，不保證落在 minimum/maximum 之內。
+    # gemma3:4b 有 10/95 筆回 95.0（把 0-1 當成百分比）。結構化輸出保證的是形狀，不是語意。
+    try:
+        conf = float(verdict.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        conf = 0.0
+    if 1.0 < conf <= 100.0:          # 明顯是百分比，換算回來
+        conf /= 100.0
+    verdict["confidence"] = min(max(conf, 0.0), 1.0)
+    price_in, price_out = PRICES.get(model, (0.0, 0.0))     # 本地模型 -> 0
+    verdict.update(model=model, tool_calls=tool_calls,
+                   input_tokens=usage["input"], output_tokens=usage["output"],
+                   cost_usd=round(usage["input"] / 1e6 * price_in + usage["output"] / 1e6 * price_out, 5))
+    return verdict
 
 
 # ------------------------------------------------------------------ agent loop
@@ -389,10 +530,22 @@ def cmd_run(args: argparse.Namespace) -> None:
         for f in findings:
             print("-" * 70, "\n", finding_prompt(f))
         return
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        sys.exit("ANTHROPIC_API_KEY is not set (use --dry-run to only print prompts)")
-    from anthropic import Anthropic  # imported late so --dry-run / report work without the SDK
-    client = Anthropic()             # max_retries=2 by default (429/5xx/529 handled with backoff)
+    client = None
+    use_tools = True
+    if args.provider == "anthropic":
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            sys.exit("ANTHROPIC_API_KEY is not set (use --dry-run, or --provider ollama)")
+        from anthropic import Anthropic  # imported late so --dry-run / report work without the SDK
+        client = Anthropic()             # max_retries=2 by default (429/5xx/529 with backoff)
+    else:
+        caps = ollama_capabilities(args.model)
+        if not caps:
+            sys.exit(f"cannot reach ollama at {OLLAMA_BASE_URL} (or model '{args.model}' is not pulled).\n"
+                     f"  host:      ollama serve && ollama pull {args.model}\n"
+                     f"  container: OLLAMA_BASE_URL must point at the host, default is host.docker.internal")
+        use_tools = "tools" in caps
+        print(f"[triage] provider=ollama base={OLLAMA_BASE_URL} capabilities={sorted(caps)} "
+              f"-> mode={'tool-use loop' if use_tools else 'prefetched evidence + JSON schema'}")
 
     results, cached, spent = [], 0, 0.0
     for f in findings:
@@ -402,7 +555,8 @@ def cmd_run(args: argparse.Namespace) -> None:
             cached += 1
         else:
             t0 = time.time()
-            v = triage_one(client, repo, f, args.model)
+            v = (triage_one(client, repo, f, args.model) if args.provider == "anthropic"
+                 else triage_one_ollama(repo, f, args.model, use_tools))
             v["created_at"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
             conn.execute(
                 "INSERT OR REPLACE INTO triage(fingerprint, verdict, confidence, reason, suggested_fix,"
@@ -422,7 +576,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         results.append(merged)
 
     if args.json:
-        summary = {"model": args.model, "count": len(results), "cached": cached,
+        summary = {"provider": args.provider, "model": args.model, "count": len(results), "cached": cached,
                    "cost_usd_this_run": round(spent, 4),
                    "by_verdict": {k: sum(1 for r in results if r["triage"]["verdict"] == k)
                                   for k in ("TP", "FP", "NEEDS_REVIEW")}}
@@ -441,7 +595,7 @@ def cmd_report(args: argparse.Namespace) -> None:
     if not args.md:
         print(json.dumps(s, indent=2))
         return
-    print(f"### LLM triage ({s['model']}) — TP **{s['by_verdict']['TP']}** · FP **{s['by_verdict']['FP']}**"
+    print(f"### LLM triage ({s.get('provider','anthropic')} / {s['model']}) — TP **{s['by_verdict']['TP']}** · FP **{s['by_verdict']['FP']}**"
           f" · needs review **{s['by_verdict']['NEEDS_REVIEW']}** · cached {s['cached']}"
           f" · cost this run ${s['cost_usd_this_run']}\n")
     print("| Verdict | Conf | Severity | Location | Rule / CVE | Reason | Suggested fix |")
@@ -477,6 +631,8 @@ def main() -> None:
     src.add_argument("--run", help="triage a whole ingested run label, e.g. head")
     r.add_argument("--category", choices=["sast", "sca", "secret", "misconfig"])
     r.add_argument("--limit", type=int)
+    r.add_argument("--provider", default=DEFAULT_PROVIDER, choices=["anthropic", "ollama"],
+                   help="anthropic（付費 API，strict tool）或 ollama（本機免費）")
     r.add_argument("--model", default=DEFAULT_MODEL)
     r.add_argument("--repo", default=".")
     r.add_argument("--json", default="out/triage.json")
@@ -493,6 +649,9 @@ def main() -> None:
     s.set_defaults(func=cmd_show)
 
     args = p.parse_args()
+    # 選了 ollama 又沒指定模型時，別把 claude 的名字送去本機
+    if getattr(args, "provider", None) == "ollama" and args.model.startswith("claude-"):
+        args.model = os.environ.get("TRIAGE_MODEL_OLLAMA", "gemma3:4b")
     args.func(args)
 
 

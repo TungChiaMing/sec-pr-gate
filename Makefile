@@ -5,6 +5,8 @@ SEMGREP_RULESETS ?= p/default p/secrets p/owasp-top-ten
 TRIVY_SCANNERS   ?= vuln,secret,misconfig
 BASE_REF         ?= main
 TRIAGE_JSON      ?= $(OUT_DIR)/triage.json
+PROVIDER         ?= ollama
+MODEL            ?=
 
 # 掃描標的（repo 根目錄）與報告輸出目錄，都在 container 內的路徑
 TARGET  ?= /src
@@ -26,11 +28,18 @@ DOCKER = docker run --rm \
 	  -e TRIVY_SCANNERS="$(TRIVY_SCANNERS)" \
 	  -e BASE_REF="$(BASE_REF)"
 
-# D4 triage：多穿透 ANTHROPIC_API_KEY 與 TRIAGE_MODEL（值只在你的 shell 裡，不進 repo）
-DOCKER_AI = $(DOCKER) -e ANTHROPIC_API_KEY -e TRIAGE_MODEL
+# D4 triage：
+#   PROVIDER=ollama  -> 打本機 ollama（免費，預設）
+#   PROVIDER=anthropic -> 打 Anthropic API（要 ANTHROPIC_API_KEY，值只在你的 shell 裡，不進 repo）
+#   MODEL=xxx 可覆寫模型；留空由 triage_agent.py 依 provider 選預設
+# --add-host 讓 container 內的 host.docker.internal 指得到你的 Mac（Linux 上也能用）
+DOCKER_AI = $(DOCKER) \
+	  --add-host=host.docker.internal:host-gateway \
+	  -e ANTHROPIC_API_KEY -e OLLAMA_BASE_URL -e TRIAGE_MODEL_OLLAMA -e OLLAMA_TIMEOUT
+TRIAGE_ARGS = --provider $(PROVIDER) $(if $(MODEL),--model $(MODEL),)
 
 .PHONY: help build version scan gate sast sca count lock baseline diff findings \
-        triage triage-dry triage-head triage-report triage-show \
+        triage triage-dry triage-head triage-report triage-show ollama-check \
         shell lint-ci lint-ci-pedantic clean
 
 ## help     : 列出可用 target
@@ -84,21 +93,29 @@ findings: build
 	$(DOCKER) $(IMAGE) findings --db $(OUT_DIR)/findings.db $(ARGS)
 
 # ---------------------------------------------------------------- D4
-## triage   : 對 out/new.json（PR 新增的 findings）跑 LLM triage
+## triage   : 對 out/new.json 跑 LLM triage（預設 PROVIDER=ollama，免費）
 triage: build
-	$(DOCKER_AI) $(IMAGE) triage --db $(OUT_DIR)/findings.db run --input $(OUT_DIR)/new.json --json $(OUT_DIR)/triage.json $(ARGS)
+	$(DOCKER_AI) $(IMAGE) triage --db $(OUT_DIR)/findings.db run --input $(OUT_DIR)/new.json --json $(OUT_DIR)/triage.json $(TRIAGE_ARGS) $(ARGS)
 
 ## triage-dry : 只印 prompt，不呼叫 API、不需要 API key
 triage-dry: build
 	$(DOCKER) $(IMAGE) triage --db $(OUT_DIR)/findings.db run --input $(OUT_DIR)/new.json --dry-run $(ARGS)
 
-## triage-head : 對整個 head run 跑 triage（Python + JS + SCA + misconfig 全部）
+## triage-head : 對整個 head run 跑 triage（例：make triage-head PROVIDER=anthropic MODEL=claude-sonnet-5）
 triage-head: build
-	$(DOCKER_AI) $(IMAGE) triage --db $(OUT_DIR)/findings.db run --run head --json $(OUT_DIR)/triage-head.json $(ARGS)
+	$(DOCKER_AI) $(IMAGE) triage --db $(OUT_DIR)/findings.db run --run head --json $(OUT_DIR)/triage-head.json $(TRIAGE_ARGS) $(ARGS)
 
 ## triage-report : 把 triage 結果印成 Markdown 表格（TRIAGE_JSON 可換成 triage-head.json）
 triage-report: build
 	$(DOCKER) $(IMAGE) triage report --json $(TRIAGE_JSON) --md
+
+## ollama-check : 確認 container 連得到本機 ollama、模型有沒有 tools 能力
+ollama-check: build
+	$(DOCKER_AI) $(IMAGE) python3 -c "import os,json,urllib.request; \
+	b=os.environ.get('OLLAMA_BASE_URL','http://host.docker.internal:11434'); \
+	m=os.environ.get('MODEL_TO_CHECK','gemma3:4b'); \
+	print('base:',b); \
+	print(json.dumps({k:v for k,v in json.load(urllib.request.urlopen(urllib.request.Request(b+'/api/show',data=json.dumps({'model':m}).encode(),headers={'content-type':'application/json'}),timeout=30)).items() if k in ('capabilities','details')},indent=2))"
 
 ## triage-show : 列出資料庫裡所有 verdict 與理由
 triage-show: build
