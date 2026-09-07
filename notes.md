@@ -632,6 +632,29 @@ workflow 的 triage step 在 `ANTHROPIC_API_KEY` 為空時寫一份空的 `triag
 `uses:` 14 個全 pin，actionlint 無輸出，zizmor pedantic `No findings`。
 所有 `${{ }}` 都在 `concurrency` / `env:` / `with:`，**沒有任何一個在 `run:` 裡**（template injection）。
 
+## CI 驗收結果
+
+```
+triage: {'provider': 'none', 'model': 'none', 'count': 0, 'cached': 0,
+         'cost_usd_this_run': 0, 'by_verdict': {'TP': 0, 'FP': 0, 'NEEDS_REVIEW': 0}}
+diff  : {'head_total': 98, 'new': 3, 'fixed': 0, 'unchanged': 95}
+```
+
+`pr-security` 三個 job 全綠（含改名後的 `Normalize + Diff + Triage + Job Summary`），
+triage step 走 skip 分支、印出 `::notice::ANTHROPIC_API_KEY not set` 並綠燈通過，
+artifact `findings` 多了 `triage.json`。
+
+`head_total` 從 95 變 98 —— 多的 3 筆就是 PR 的 eval findings；`unchanged` 95 對得上 main 的 head run。
+
+**一個 gate 在缺少可選元件（LLM triage）時整條不掛掉 —— 這正是 D5 `agent_enabled` input 要的行為，而且已經實測過。**
+
+### Run URLs
+
+| 用途 | 結果 | URL |
+|---|---|---|
+| main（D4 workflow 上線） | success | https://github.com/TungChiaMing/sec-pr-gate/actions/runs/34141799234 |
+| PR #1（triage skipped） | success | https://github.com/TungChiaMing/sec-pr-gate/actions/runs/34141919451 |
+
 ## 今天沒做的
 
 - **`granite4.1:3b` 對照組**（有 tools capability）—— 同樣大小的模型、同一份 golden labels，差別只在 tool loop vs prefetch。這是回答「為什麼選 tool use」最乾淨的實驗，因硬體限制暫緩。
