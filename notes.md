@@ -149,6 +149,33 @@ requests ×3（CVE-2024-35195、CVE-2024-47081、CVE-2026-25645）、urllib3 ×2
 
 # D2 — GitHub Actions PR gate（2026-09-05）
 
+## 補充（D4 發現）：Semgrep CE 的 snippet 也是 "requires login"
+
+D3 寫 fingerprint 時假設 `extra.lines` 是真的程式碼。實際查證：
+
+| 工具 | snippet 相異值數（94 筆 base run） |
+|---|---|
+| semgrep | **1**（全部是字串 `"requires login"`） |
+| trivy | 6 |
+
+也就是說 **Semgrep CE 不只 `extra.fingerprint` 要登入，`extra.lines` 也是**。
+後果：對 Semgrep 而言 snippet 這個欄位對 fingerprint **貢獻零熵**，
+identity 實際上退化成 `(tool, category, rule_id, path, ordinal)`。
+
+**目前沒有實際影響** —— 查過 base run，沒有任何 `(tool, rule_id, path)` 出現超過一次，
+所以 ordinal 全部是 0，不存在碰撞。
+
+**但失效模式是明確的**：如果某個檔案裡同一條規則命中兩次，刪掉第一次會讓第二次的 ordinal 從 1 變 0，
+fingerprint 跟著變 → 產生一筆假的 fixed 加一筆假的 new。
+Trivy 那邊沒這個問題（`Match` / `Title` 是真的值）。
+
+**沒有立刻修的理由**：改 `norm_snippet` 會讓所有 Semgrep 的 fingerprint 重算，
+上面那張「跨環境 8/8」的對照表會全部失效。真正的修法是換一個對 CE 可得的欄位
+（例如把 `start.col` + `end.col` 或 rule message 加進 key），留給 D6 一併處理。
+
+D4 的 prompt 已經把這個字串濾掉了 —— `"requires login"` 不是證據，
+送給模型只會誤導，讓 agent 自己用 `get_context` 去讀真的程式碼。
+
 ## Run URLs
 
 | 用途 | 結果 | URL |

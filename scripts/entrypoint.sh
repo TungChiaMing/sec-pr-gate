@@ -17,6 +17,7 @@ case "$cmd" in
   baseline) exec /usr/local/bin/baseline.sh "$@" ;;
   diff)     exec /usr/local/bin/diff.sh "$@" ;;
   findings) exec python3 /usr/local/bin/findings.py "$@" ;;
+  triage)   exec python3 /usr/local/bin/triage_agent.py "$@" ;;
   version)
     echo "semgrep : $(semgrep --version 2>/dev/null)"
     echo "trivy   : $(trivy --version 2>/dev/null | head -1)"
@@ -24,6 +25,7 @@ case "$cmd" in
     echo "actionlint: $(actionlint --version 2>/dev/null | head -1)"
     echo "zizmor  : $(zizmor --version 2>/dev/null | head -1)"
     echo "node    : $(node --version 2>/dev/null)"
+    echo "anthropic: $(python -c 'import anthropic;print(anthropic.__version__)' 2>/dev/null)"
     echo "python  : $(python --version 2>&1)"
     ;;
   sh|bash)  exec bash "$@" ;;

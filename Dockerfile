@@ -25,6 +25,9 @@ ARG ACTIONLINT_VERSION="1.7.10"
 ARG ACTIONLINT_SHA256_AMD64="f4c76b71db5755a713e6055cbb0857ed07e103e028bda117817660ebadb4386f"
 ARG ACTIONLINT_SHA256_ARM64="cd3dfe5f66887ec6b987752d8d9614e59fd22f39415c5ad9f28374623f41773a"
 
+# D4：LLM triage agent 的 SDK（版本釘死；官方 latest 為 1.4.0，requires Python >= 3.10）
+ARG ANTHROPIC_SPEC="==1.4.0"
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -67,9 +70,9 @@ RUN set -eux; \
     install -m 0755 /tmp/actionlint /usr/local/bin/actionlint; \
     rm -f /tmp/actionlint.tgz /tmp/actionlint
 
-# ---------- semgrep + zizmor ----------
+# ---------- semgrep + zizmor + anthropic ----------
 RUN pip install --upgrade pip \
- && pip install "semgrep${SEMGREP_SPEC}" "zizmor${ZIZMOR_SPEC}"
+ && pip install "semgrep${SEMGREP_SPEC}" "zizmor${ZIZMOR_SPEC}" "anthropic${ANTHROPIC_SPEC}"
 
 # ---------- 非 root 使用者 ----------
 RUN useradd -m -u 1000 -s /bin/bash scanner \
@@ -92,7 +95,8 @@ WORKDIR /src
 # 冒煙測試：所有工具都叫得動才算 build 成功
 RUN semgrep --version && trivy --version && gh --version \
  && actionlint --version && zizmor --version && shellcheck --version \
- && node --version && npm --version
+ && node --version && npm --version \
+ && python -c "import anthropic; print('anthropic', anthropic.__version__)"
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 CMD ["scan"]

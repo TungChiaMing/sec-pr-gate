@@ -4,6 +4,7 @@ IMAGE            ?= sec-pr-gate:latest
 SEMGREP_RULESETS ?= p/default p/secrets p/owasp-top-ten
 TRIVY_SCANNERS   ?= vuln,secret,misconfig
 BASE_REF         ?= main
+TRIAGE_JSON      ?= $(OUT_DIR)/triage.json
 
 # 掃描標的（repo 根目錄）與報告輸出目錄，都在 container 內的路徑
 TARGET  ?= /src
@@ -25,7 +26,12 @@ DOCKER = docker run --rm \
 	  -e TRIVY_SCANNERS="$(TRIVY_SCANNERS)" \
 	  -e BASE_REF="$(BASE_REF)"
 
-.PHONY: help build version scan gate sast sca count lock baseline diff findings shell lint-ci lint-ci-pedantic clean
+# D4 triage：多穿透 ANTHROPIC_API_KEY 與 TRIAGE_MODEL（值只在你的 shell 裡，不進 repo）
+DOCKER_AI = $(DOCKER) -e ANTHROPIC_API_KEY -e TRIAGE_MODEL
+
+.PHONY: help build version scan gate sast sca count lock baseline diff findings \
+        triage triage-dry triage-head triage-report triage-show \
+        shell lint-ci lint-ci-pedantic clean
 
 ## help     : 列出可用 target
 help:
@@ -76,6 +82,27 @@ diff: build
 ## findings : 直接呼叫 findings.py（例：make findings ARGS="show --run head"）
 findings: build
 	$(DOCKER) $(IMAGE) findings --db $(OUT_DIR)/findings.db $(ARGS)
+
+# ---------------------------------------------------------------- D4
+## triage   : 對 out/new.json（PR 新增的 findings）跑 LLM triage
+triage: build
+	$(DOCKER_AI) $(IMAGE) triage --db $(OUT_DIR)/findings.db run --input $(OUT_DIR)/new.json --json $(OUT_DIR)/triage.json $(ARGS)
+
+## triage-dry : 只印 prompt，不呼叫 API、不需要 API key
+triage-dry: build
+	$(DOCKER) $(IMAGE) triage --db $(OUT_DIR)/findings.db run --input $(OUT_DIR)/new.json --dry-run $(ARGS)
+
+## triage-head : 對整個 head run 跑 triage（Python + JS + SCA + misconfig 全部）
+triage-head: build
+	$(DOCKER_AI) $(IMAGE) triage --db $(OUT_DIR)/findings.db run --run head --json $(OUT_DIR)/triage-head.json $(ARGS)
+
+## triage-report : 把 triage 結果印成 Markdown 表格（TRIAGE_JSON 可換成 triage-head.json）
+triage-report: build
+	$(DOCKER) $(IMAGE) triage report --json $(TRIAGE_JSON) --md
+
+## triage-show : 列出資料庫裡所有 verdict 與理由
+triage-show: build
+	$(DOCKER) $(IMAGE) triage --db $(OUT_DIR)/findings.db show
 
 # ---------------------------------------------------------------- 其他
 ## lint-ci  : 掃 pipeline 本身（actionlint + zizmor）
