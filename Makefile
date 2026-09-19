@@ -12,7 +12,11 @@ MODEL            ?=
 TARGET  ?= /src
 OUT_DIR ?= /src/out
 
-# D1/D2 的門檻，只有 make gate 會用到
+# D5 policy gate 的門檻
+SEVERITY_THRESHOLD ?= HIGH
+GATE_FP_MIN_CONF   ?= 0.8
+
+# D1/D2 的舊門檻（只有顯式傳給 make scan 時才生效）
 FAIL_ON_SEMGREP ?= ERROR
 FAIL_ON_TRIVY   ?= HIGH,CRITICAL
 
@@ -26,7 +30,8 @@ DOCKER = docker run --rm \
 	  -e OUT_DIR="$(OUT_DIR)" \
 	  -e SEMGREP_RULES="$(SEMGREP_RULESETS)" \
 	  -e TRIVY_SCANNERS="$(TRIVY_SCANNERS)" \
-	  -e BASE_REF="$(BASE_REF)"
+	  -e BASE_REF="$(BASE_REF)" \
+	  -e GATE_FP_MIN_CONF="$(GATE_FP_MIN_CONF)"
 
 # D4 triage：
 #   PROVIDER=ollama  -> 打本機 ollama（免費，預設）
@@ -38,7 +43,7 @@ DOCKER_AI = $(DOCKER) \
 	  -e ANTHROPIC_API_KEY -e OLLAMA_BASE_URL -e TRIAGE_MODEL_OLLAMA -e OLLAMA_TIMEOUT
 TRIAGE_ARGS = --provider $(PROVIDER) $(if $(MODEL),--model $(MODEL),)
 
-.PHONY: help build version scan gate sast sca count lock baseline diff findings \
+.PHONY: help build version scan gate gate-all sast sca count lock baseline diff findings \
         triage triage-dry triage-head triage-report triage-show ollama-check \
         shell lint-ci lint-ci-pedantic clean
 
@@ -71,9 +76,20 @@ sca: build
 count: build
 	$(DOCKER) $(IMAGE) count
 
-## gate     : D1/D2 的門檻判定（命中即 exit 1）。真正的 gate 邏輯 D5 才會取代它
+## gate     : D5 的 policy gate（純規則，不需要 LLM）。BLOCK 即 exit 1
 gate: build
-	$(DOCKER) -e FAIL_ON_SEMGREP="$(FAIL_ON_SEMGREP)" -e FAIL_ON_TRIVY="$(FAIL_ON_TRIVY)" $(IMAGE) scan
+	$(DOCKER) $(IMAGE) policy \
+	  --findings $(OUT_DIR)/new.json --triage $(OUT_DIR)/triage.json \
+	  --threshold $(SEVERITY_THRESHOLD) --out $(OUT_DIR)/gate.json $(ARGS)
+
+## gate-all : 同上，但對 head 全量判定（相當於 fail_on=all）
+gate-all: build
+	$(DOCKER) $(IMAGE) findings --db $(OUT_DIR)/findings.db new --head head --json $(OUT_DIR)/head.json
+	$(DOCKER) $(IMAGE) policy \
+	  --findings $(OUT_DIR)/head.json --triage $(OUT_DIR)/triage-head.json \
+	  --threshold $(SEVERITY_THRESHOLD) --out $(OUT_DIR)/gate.json $(ARGS)
+
+# 註：D1/D2 的舊門檻行為仍可用 `make scan FAIL_ON_SEMGREP=ERROR FAIL_ON_TRIVY=HIGH,CRITICAL` 取得。
 
 # ---------------------------------------------------------------- D3
 ## lock     : 產生 samples/node-api/package-lock.json（不裝 node_modules）

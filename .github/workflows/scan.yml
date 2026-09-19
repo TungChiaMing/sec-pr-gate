@@ -1,0 +1,317 @@
+# .github/workflows/scan.yml — sec-pr-gate reusable workflow
+#
+# 任何 repo 只要在自己的 .github/workflows/ 放一個 caller，用 uses: 指到這個檔案的
+# commit SHA，就能套用同一套掃描 + gate。版本升級由 gate 團隊主導（換 SHA）。
+#
+# 注意：reusable workflow 裡的 github.* 全部是 CALLER 的（repository、event、token），
+# 所以 gate 自己的 scripts/*.py 必須另外 checkout 到 .gate/。
+name: sec-pr-gate
+
+on:
+  workflow_call:
+    inputs:
+      target_path:
+        type: string
+        default: "."
+        description: 掃描起點（相對 caller repo 根目錄）
+      semgrep_rulesets:
+        type: string
+        default: "p/default p/secrets p/owasp-top-ten"
+      trivy_scanners:
+        type: string
+        default: "vuln,secret,misconfig"
+      severity_threshold:
+        type: string
+        default: "HIGH"
+        description: CRITICAL | HIGH | MEDIUM | LOW
+      fail_on:
+        type: string
+        default: "new"
+        description: new = 只看 baseline diff 新增；all = head 全量
+      agent_enabled:
+        type: boolean
+        default: false
+        description: D6 才會接免費 hosted endpoint；預設關，gate 純規則就能跑
+      review_comments:
+        type: boolean
+        default: true
+      gate_ref:
+        type: string
+        default: ""
+        description: >-
+          明確指定 gate repo 的 owner/repo@sha（例："ken/sec-pr-gate@abc123..."）。
+          留空則用 github.job_workflow_ref / job_workflow_sha 自動推導 —— 那是
+          「定義這個 job 的 workflow 檔」的 ref 與 commit，也就是 caller 在 uses:
+          後面 pin 的那個 SHA，保證 YAML 與 scripts 永遠同一版。
+    secrets:
+      TRIAGE_API_KEY:
+        required: false
+    outputs:
+      decision:
+        description: PASS | BLOCK
+        value: ${{ jobs.gate.outputs.decision }}
+
+# Deny-by-default；caller 給的 permissions 是上限，這裡只能維持或縮小
+permissions: {}
+
+env:
+  TRIVY_VERSION: "0.74.0"
+  # sha256 of trivy_0.74.0_Linux-64bit.tar.gz（與 D2/D3 同一個值）
+  TRIVY_SHA256: "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
+  SEMGREP_VERSION: "1.176.1"
+
+jobs:
+  scan:
+    name: scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read           # checkout caller head/base + gate repo
+    steps:
+      # 1) caller 的 PR head
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      # 2) caller 的 base（baseline diff 用）
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+
+      # 3) gate 自己的 repo —— 版本 = caller 在 uses: 後面 pin 的那個 SHA。
+      #    job.workflow_ref / job.workflow_sha 指的是「定義這個 job 的 workflow 檔」，
+      #    對 reusable workflow 來說就是 scan.yml 所在的 repo 與 commit，
+      #    保證 YAML 與 scripts 永遠同一版。
+      - name: Resolve gate repo/sha
+        id: gate
+        env:
+          # actionlint 1.7.10 的 context schema 還沒收錄這兩個屬性，但 GitHub 確實提供
+          # （job_workflow_ref 也是 reusable workflow 的標準 OIDC claim）。
+          # make lint-ci 用 -ignore 略過這則誤報，理由記在 notes.md。
+          WF_REF: ${{ github.job_workflow_ref }}
+          WF_SHA: ${{ github.job_workflow_sha }}
+          OVERRIDE: ${{ inputs.gate_ref }}
+        run: |
+          set -euo pipefail
+          if [ -n "${OVERRIDE}" ]; then
+            GATE_REPO="${OVERRIDE%@*}"
+            GATE_SHA="${OVERRIDE##*@}"
+            echo "gate: 使用 caller 明確指定的 gate_ref"
+          else
+            GATE_REPO="$(echo "${WF_REF}" | cut -d/ -f1,2)"
+            GATE_SHA="${WF_SHA}"
+          fi
+          # 空值會讓 checkout 靜默抓到預設分支 —— 那正是「跑 v1 的 YAML 卻用 main 的 script」
+          # 這個 bug 的來源，所以寧可大聲失敗。
+          if [ -z "${GATE_REPO}" ] || [ -z "${GATE_SHA}" ]; then
+            echo "::error::無法解析 gate repo/sha（WF_REF='${WF_REF}' WF_SHA='${WF_SHA}'）。請用 with: gate_ref: owner/repo@sha 明確指定。"
+            exit 1
+          fi
+          {
+            echo "repo=${GATE_REPO}"
+            echo "sha=${GATE_SHA}"
+          } >> "$GITHUB_OUTPUT"
+          echo "gate repo=${GATE_REPO} sha=${GATE_SHA}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.gate.outputs.repo }}
+          ref: ${{ steps.gate.outputs.sha }}
+          path: .gate
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install scanners (pinned + checksum verified)
+        run: |
+          set -euo pipefail
+          pip install --disable-pip-version-check "semgrep==${SEMGREP_VERSION}"
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          curl -fsSL -o trivy.tgz "${base}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  trivy.tgz" | sha256sum -c -
+          tar -xzf trivy.tgz trivy
+          sudo install -m 0755 trivy /usr/local/bin/trivy
+          rm -f trivy trivy.tgz
+          trivy --version
+
+      - name: Cache Trivy DB
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: trivy-db-${{ runner.os }}-
+
+      - name: Scan head
+        env:
+          RULESETS: ${{ inputs.semgrep_rulesets }}
+          SCANNERS: ${{ inputs.trivy_scanners }}
+          TARGET: ${{ inputs.target_path }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          CFG=()
+          for r in ${RULESETS}; do CFG+=(--config "$r"); done
+          semgrep scan "${CFG[@]}" --metrics=off \
+            --exclude out --exclude base --exclude .gate --exclude examples \
+            --json-output out/semgrep-head.json "${TARGET}"
+          trivy fs --scanners "${SCANNERS}" --no-progress \
+            --skip-dirs out --skip-dirs base --skip-dirs .gate --skip-dirs examples \
+            --format json -o out/trivy-head.json "${TARGET}"
+
+      - name: Scan base
+        working-directory: base
+        env:
+          RULESETS: ${{ inputs.semgrep_rulesets }}
+          SCANNERS: ${{ inputs.trivy_scanners }}
+          TARGET: ${{ inputs.target_path }}
+        run: |
+          set -euo pipefail
+          CFG=()
+          for r in ${RULESETS}; do CFG+=(--config "$r"); done
+          semgrep scan "${CFG[@]}" --metrics=off \
+            --exclude out --exclude base --exclude .gate --exclude examples \
+            --json-output ../out/semgrep-base.json "${TARGET}"
+          trivy fs --scanners "${SCANNERS}" --no-progress \
+            --skip-dirs out --skip-dirs base --skip-dirs .gate --skip-dirs examples \
+            --skip-db-update --skip-check-update \
+            --format json -o ../out/trivy-base.json "${TARGET}"
+
+      - name: Normalize + fingerprint + baseline diff
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          FP=.gate/scripts/findings.py
+          python3 "$FP" --db out/findings.db ingest --run base --sha "${BASE_SHA}" \
+            out/semgrep-base.json out/trivy-base.json
+          python3 "$FP" --db out/findings.db ingest --run head --sha "${HEAD_SHA}" \
+            out/semgrep-head.json out/trivy-head.json
+          python3 "$FP" --db out/findings.db new --base base --head head \
+            --json out/new.json --md >> "$GITHUB_STEP_SUMMARY"
+          # fail_on=all 用的全量檔（沒有 --base 就是「everything is new」）
+          python3 "$FP" --db out/findings.db new --head head --json out/head.json > /dev/null
+
+      # 預設關閉。D6 才會接免費的 hosted OpenAI-compatible endpoint。
+      - name: LLM triage (optional)
+        if: ${{ inputs.agent_enabled }}
+        env:
+          TRIAGE_API_KEY: ${{ secrets.TRIAGE_API_KEY }}
+        run: |
+          set -euo pipefail
+          pip install --disable-pip-version-check "anthropic==1.4.0"
+          ANTHROPIC_API_KEY="${TRIAGE_API_KEY}" python3 .gate/scripts/triage_agent.py \
+            --db out/findings.db run --input out/new.json --json out/triage.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: findings
+          path: out/
+          if-no-files-found: error
+          retention-days: 14
+
+  gate:
+    name: gate
+    needs: scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read           # checkout gate scripts
+      pull-requests: write     # PR review comments（fork PR 會是唯讀 -> continue-on-error）
+    outputs:
+      decision: ${{ steps.policy.outputs.decision }}
+    steps:
+      - name: Resolve gate repo/sha
+        id: gate
+        env:
+          # actionlint 1.7.10 的 context schema 還沒收錄這兩個屬性，但 GitHub 確實提供
+          # （job_workflow_ref 也是 reusable workflow 的標準 OIDC claim）。
+          # make lint-ci 用 -ignore 略過這則誤報，理由記在 notes.md。
+          WF_REF: ${{ github.job_workflow_ref }}
+          WF_SHA: ${{ github.job_workflow_sha }}
+          OVERRIDE: ${{ inputs.gate_ref }}
+        run: |
+          set -euo pipefail
+          if [ -n "${OVERRIDE}" ]; then
+            GATE_REPO="${OVERRIDE%@*}"
+            GATE_SHA="${OVERRIDE##*@}"
+            echo "gate: 使用 caller 明確指定的 gate_ref"
+          else
+            GATE_REPO="$(echo "${WF_REF}" | cut -d/ -f1,2)"
+            GATE_SHA="${WF_SHA}"
+          fi
+          # 空值會讓 checkout 靜默抓到預設分支 —— 那正是「跑 v1 的 YAML 卻用 main 的 script」
+          # 這個 bug 的來源，所以寧可大聲失敗。
+          if [ -z "${GATE_REPO}" ] || [ -z "${GATE_SHA}" ]; then
+            echo "::error::無法解析 gate repo/sha（WF_REF='${WF_REF}' WF_SHA='${WF_SHA}'）。請用 with: gate_ref: owner/repo@sha 明確指定。"
+            exit 1
+          fi
+          {
+            echo "repo=${GATE_REPO}"
+            echo "sha=${GATE_SHA}"
+          } >> "$GITHUB_OUTPUT"
+          echo "gate repo=${GATE_REPO} sha=${GATE_SHA}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.gate.outputs.repo }}
+          ref: ${{ steps.gate.outputs.sha }}
+          path: .gate
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: findings
+          path: out
+
+      - name: Policy
+        id: policy
+        env:
+          FAIL_ON: ${{ inputs.fail_on }}
+          THRESHOLD: ${{ inputs.severity_threshold }}
+        run: |
+          set -euo pipefail
+          F=out/new.json
+          [ "${FAIL_ON}" = "all" ] && F=out/head.json
+          set +e
+          python3 .gate/scripts/policy.py --findings "$F" --triage out/triage.json \
+            --threshold "${THRESHOLD}" --out out/gate.json | tee -a "$GITHUB_STEP_SUMMARY"
+          RC=${PIPESTATUS[0]}
+          set -e
+          DECISION=$(python3 -c 'import json;print(json.load(open("out/gate.json"))["decision"])')
+          {
+            echo "decision=${DECISION}"
+            echo "rc=${RC}"
+          } >> "$GITHUB_OUTPUT"
+          echo "gate decision=${DECISION} rc=${RC}"
+
+      - name: Review comments
+        if: ${{ inputs.review_comments && steps.policy.outputs.rc != '0' }}
+        continue-on-error: true    # fork PR 的 GITHUB_TOKEN 唯讀；留言失敗不影響 gate 結果
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python3 .gate/scripts/review_comment.py out/gate.json "${PR_NUMBER}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gate
+          path: out/gate.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Fail if BLOCK
+        if: ${{ steps.policy.outputs.rc != '0' }}
+        run: |
+          echo "::error::sec-pr-gate BLOCK — 見 PR review comments 或 gate artifact"
+          exit 1

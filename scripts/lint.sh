@@ -34,8 +34,12 @@ log "檢查 ${#FILES[@]} 個 workflow：$(printf '%s ' "${FILES[@]##*/}")"
 
 FAIL=0
 
+# actionlint 1.7.10 的 github context schema 還沒收錄 job_workflow_ref / job_workflow_sha，
+# 但 GitHub 確實提供（也是 reusable workflow 的標準 OIDC claim）。這是工具落後，不是我們寫錯。
+ACTIONLINT_IGNORE='property "job_workflow_(ref|sha)" is not defined'
+
 log "actionlint（schema + expression + shellcheck）"
-if actionlint "${FILES[@]}"; then
+if actionlint -ignore "$ACTIONLINT_IGNORE" "${FILES[@]}"; then
   printf '\033[1;32m[OK]\033[0m actionlint 無問題\n' >&2
 else
   printf '\033[1;31m[FAIL]\033[0m actionlint 有發現\n' >&2

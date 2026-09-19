@@ -43,7 +43,7 @@ for r in $SEMGREP_RULES; do CFG+=(--config "$r"); done
 log "semgrep（base）"
 set +e
 semgrep scan "${CFG[@]}" --metrics=off --disable-version-check --quiet \
-  --exclude out --exclude base --exclude reports --exclude node_modules \
+  --exclude out --exclude base --exclude reports --exclude examples --exclude node_modules \
   --json-output "$OUT_DIR/semgrep.base.json" .
 rc=$?
 set -e
@@ -51,7 +51,7 @@ set -e
 
 log "trivy（base）"
 trivy fs --scanners "$TRIVY_SCANNERS" --no-progress --exit-code 0 \
-  --skip-dirs out --skip-dirs base --skip-dirs reports --skip-dirs node_modules \
+  --skip-dirs out --skip-dirs base --skip-dirs reports --skip-dirs examples --skip-dirs node_modules \
   --skip-db-update --skip-check-update \
   --format json --output "$OUT_DIR/trivy.base.json" .
 

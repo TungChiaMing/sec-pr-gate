@@ -18,6 +18,8 @@ case "$cmd" in
   diff)     exec /usr/local/bin/diff.sh "$@" ;;
   findings) exec python3 /usr/local/bin/findings.py "$@" ;;
   triage)   exec python3 /usr/local/bin/triage_agent.py "$@" ;;
+  policy)   exec python3 /usr/local/bin/policy.py "$@" ;;
+  review)   exec python3 /usr/local/bin/review_comment.py "$@" ;;
   version)
     echo "semgrep : $(semgrep --version 2>/dev/null)"
     echo "trivy   : $(trivy --version 2>/dev/null | head -1)"

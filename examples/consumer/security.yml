@@ -1,0 +1,26 @@
+# 任何 repo 要接上 sec-pr-gate，只需要這個檔案。
+# 放在 <your-repo>/.github/workflows/security.yml
+#
+# 兩個要換的值：
+#   <OWNER>            你的 GitHub 帳號 / 組織
+#   <SEC_PR_GATE_SHA>  sec-pr-gate 的 commit SHA（不要用 @main —— tag 與 branch 都是可變指標）
+#
+# 取得最新 SHA：
+#   gh api repos/<OWNER>/sec-pr-gate/commits/main --jq .sha
+name: security
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  security:
+    uses: <OWNER>/sec-pr-gate/.github/workflows/scan.yml@<SEC_PR_GATE_SHA>
+    permissions:
+      contents: read          # checkout PR head / base
+      pull-requests: write    # 逐行 review comment（fork PR 會是唯讀，gate 結果不受影響）
+    with:
+      severity_threshold: HIGH
+      fail_on: new            # 只擋這個 PR 新增的；legacy repo 接上第一天不會全紅
