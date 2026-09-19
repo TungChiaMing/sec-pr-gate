@@ -66,6 +66,13 @@ def retry_jitter() -> float:
     return random.random() * 0.5
 
 
+@app.route("/debug/eval")
+def debug_eval():
+    expr = request.args.get("expr", "1+1")
+    # intentional TP (added in PR #1): eval() on user input -> RCE
+    return str(eval(expr))
+
+
 @app.route("/health")
 def health():
     return jsonify({"key": cache_key(b"health"), "jitter": retry_jitter()})
